@@ -1,0 +1,14 @@
+﻿# Expected after build:
+# bitlinear_cuda.pyd (~5-15 MB) - CUDA kernel
+# model.py (~11 KB)
+# generate.py (~13 KB)
+# tokenizer.py (~9 KB)
+# tokenizer.model (~2.1 MB)
+# pack_weight.py (~3 KB)
+# sample_utils.py (~1 KB)
+# stats.py (~1.5 KB)
+# convert_checkpoint.py (~4 KB)
+# convert_safetensors.py (~4 KB)
+#
+# To build and place here automatically:
+# Run: ..\..\..\..\build-gpu-windows.bat

@@ -1,0 +1,181 @@
+name: Build macOS Binaries Only
+
+on:
+  workflow_dispatch:
+    inputs:
+      create_release:
+        description: 'Create GitHub Release after build'
+        required: false
+        default: 'false'
+
+jobs:
+  # ============================================================================
+  # Build CPU Binary for macOS (ARM64 TL1)
+  # ============================================================================
+  build-cpu-macos:
+    name: Build CPU Binary (macOS ARM64 TL1)
+    runs-on: macos-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      
+      - name: Install dependencies
+        run: brew install cmake
+      
+      - name: Build CPU Binary
+        run: |
+          mkdir build && cd build
+          cmake .. -DBITNET_ARM_TL1=ON -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++
+          cmake --build . --config Release
+      
+      - name: Verify and organize
+        run: |
+          mkdir -p Release/cpu/macos
+          
+          if [ -f "build/bin/llama-server" ]; then
+            cp build/bin/llama-server Release/cpu/macos/
+            chmod +x Release/cpu/macos/llama-server
+            echo "✅ CPU binary: $(ls -lh build/bin/llama-server | awk '{print $5}')"
+          else
+            echo "❌ CPU binary not found!"
+            exit 1
+          fi
+      
+      - name: Upload CPU artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: cpu-macos
+          path: Release/cpu/macos/
+
+  # ============================================================================
+  # Copy GPU Modules for macOS (No CUDA)
+  # ============================================================================
+  copy-gpu-modules-macos:
+    name: Copy GPU Modules (macOS - No CUDA)
+    runs-on: macos-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Copy Python modules
+        run: |
+          mkdir -p Release/gpu/macos
+          
+          # Copy Python modules
+          cp gpu/*.py Release/gpu/macos/
+          cp gpu/tokenizer.model Release/gpu/macos/
+          
+          # Create README
+          cat > Release/gpu/macos/README.txt << 'EOF'
+          macOS GPU Support Limitation
+          =============================
+          
+          macOS does not support NVIDIA CUDA.
+          GPU acceleration is only available on:
+          - Windows with NVIDIA GPU (build locally)
+          - Linux with NVIDIA GPU (build locally)
+          
+          On macOS, use CPU backend (ARM TL1 optimized).
+          EOF
+          
+          echo "✅ GPU modules copied (no CUDA kernel)"
+      
+      - name: Upload GPU artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: gpu-macos
+          path: Release/gpu/macos/
+
+  # ============================================================================
+  # Create Release Placeholder (Optional)
+  # ============================================================================
+  create-release:
+    name: Create Release Placeholder
+    needs: [build-cpu-macos, copy-gpu-modules-macos]
+    runs-on: ubuntu-latest
+    if: github.event.inputs.create_release == 'true'
+    
+    steps:
+      - name: Download macOS artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts/
+      
+      - name: Organize Release structure
+        run: |
+          mkdir -p Release/cpu/macos
+          mkdir -p Release/gpu/macos
+          
+          # Copy macOS builds
+          cp artifacts/cpu-macos/* Release/cpu/macos/ 2>/dev/null || true
+          cp -r artifacts/gpu-macos/* Release/gpu/macos/ 2>/dev/null || true
+          
+          # Create placeholder README
+          cat > Release/README.md << 'EOF'
+          # BitNet macOS Release
+          
+          This release contains only macOS binaries.
+          Windows and Linux binaries are built locally and uploaded manually.
+          
+          ## What's Included:
+          - ✅ macOS CPU binary (ARM64 TL1 kernels)
+          - ✅ macOS GPU modules (Python only, no CUDA)
+          
+          ## What's Built Locally:
+          - Windows CPU + GPU (built on Windows with CUDA)
+          - Linux CPU + GPU (built on WSL2/Docker with CUDA)
+          
+          ## Directory Structure:
+          ```
+          Release/
+          ├── cpu/
+          │   ├── macos/llama-server (from CI)
+          │   ├── windows/llama-server.exe (upload manually)
+          │   └── linux/llama-server (upload manually)
+          └── gpu/
+              ├── macos/*.py (from CI)
+              ├── windows/*.pyd + *.py (upload manually)
+              └── linux/*.so + *.py (upload manually)
+          ```
+          EOF
+          
+          echo "📁 Release Structure:"
+          ls -lhR Release/
+      
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: macos-build-${{ github.run_number }}
+          name: macOS Binaries (Build ${{ github.run_number }})
+          body: |
+            ## BitNet macOS Binaries
+            
+            **Build:** ${{ github.run_number }}
+            **Commit:** ${{ github.sha }}
+            **Date:** ${{ github.event.head_commit.timestamp }}
+            
+            ### ✅ Included (Built by CI):
+            - macOS CPU binary (ARM64 TL1)
+            - macOS GPU modules (Python only)
+            
+            ### ⏳ To Upload Manually:
+            - Windows CPU + GPU (build locally)
+            - Linux CPU + GPU (build locally)
+            
+            ### How to Add Windows/Linux:
+            1. Build locally on Windows/WSL2
+            2. Upload binaries to this release
+            3. Update release notes
+            
+            For TabAgent integration, manual upload of all platforms required.
+          draft: true
+          prerelease: false
+          files: |
+            Release/cpu/macos/llama-server
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+

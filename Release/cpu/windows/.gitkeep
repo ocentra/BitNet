@@ -1,0 +1,5 @@
+﻿# Expected after build:
+# llama-server.exe (~80-120 MB)
+#
+# To build and place here automatically:
+# Run: ..\..\..\..\build-cpu-windows.bat
