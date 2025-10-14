@@ -49,7 +49,16 @@ echo ""
 echo "============================================================================"
 echo "Part 1: Building BitNet CPU Binary"
 echo "============================================================================"
-bash build-cpu-macos.sh
+
+# Check if already built
+if [ -f "Release/cpu/macos/llama-server-bitnet" ] && [ -f "Release/cpu/macos/llama-cli-bitnet" ] && [ -f "Release/cpu/macos/llama-bench-bitnet" ]; then
+    echo "✅ BitNet CPU binaries already exist, skipping build..."
+    echo ""
+    ls -lh Release/cpu/macos/llama-*-bitnet
+    echo ""
+else
+    bash build-cpu-macos.sh
+fi
 
 echo ""
 echo ""

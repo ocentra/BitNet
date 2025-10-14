@@ -51,49 +51,75 @@ echo ""
 echo "============================================================================"
 echo "Part 1: Building BitNet CPU Binary"
 echo "============================================================================"
-bash build-cpu-linux.sh
+
+# Check if already built
+if [ -f "Release/cpu/linux/llama-server-bitnet" ] && [ -f "Release/cpu/linux/llama-cli-bitnet" ] && [ -f "Release/cpu/linux/llama-bench-bitnet" ]; then
+    echo "✅ BitNet CPU binaries already exist, skipping build..."
+    echo ""
+    ls -lh Release/cpu/linux/llama-*-bitnet
+    echo ""
+else
+    bash build-cpu-linux.sh
+fi
 
 echo ""
 echo ""
 echo "============================================================================"
 echo "Part 2: Building Standard GPU Binary (CUDA + Vulkan)"
 echo "============================================================================"
-echo ""
-echo "Building standard llama.cpp with GPU support..."
-echo ""
 
-# Clean previous build
-rm -rf build-standard
-
-# Configure with CUDA and Vulkan
-cmake -B build-standard -DGGML_CUDA=ON -DGGML_VULKAN=ON -DLLAMA_BUILD_SERVER=ON -DLLAMA_BUILD_EXAMPLES=ON
-if [ $? -ne 0 ]; then
+# Check if already built
+if [ -f "Release/cpu/linux/llama-server-standard" ] && [ -f "Release/cpu/linux/llama-cli-standard" ] && [ -f "Release/cpu/linux/llama-bench-standard" ]; then
+    echo "✅ Standard GPU binaries already exist, skipping build..."
     echo ""
-    echo "WARNING: Standard build configuration failed! Skipping..."
+    ls -lh Release/cpu/linux/llama-*-standard
+    echo ""
 else
-    # Build
-    cmake --build build-standard --config Release -j
+    echo ""
+    echo "Building standard llama.cpp with GPU support..."
+    echo ""
+
+    # Clean previous build
+    rm -rf build-standard
+
+    # Build with CUDA only (Vulkan disabled for now - Ubuntu 20.04 has old Vulkan)
+    echo "Building with CUDA only (Vulkan support requires Ubuntu 22.04+)..."
+    cmake -B build-standard -DGGML_CUDA=ON -DGGML_VULKAN=OFF -DLLAMA_BUILD_SERVER=ON -DLLAMA_BUILD_EXAMPLES=ON
+    
     if [ $? -ne 0 ]; then
         echo ""
-        echo "WARNING: Standard build failed! Skipping..."
-    else
-        # Copy all binaries
+        echo "❌ CUDA build configuration failed! Skipping Part 2..."
         echo ""
-        echo "Copying standard binaries to Release folder..."
-        cp -f build-standard/bin/llama-server Release/cpu/linux/llama-server-standard
-        chmod +x Release/cpu/linux/llama-server-standard
-        
-        if [ -f "build-standard/bin/llama-cli" ]; then
-            cp -f build-standard/bin/llama-cli Release/cpu/linux/llama-cli-standard
-            chmod +x Release/cpu/linux/llama-cli-standard
+    else
+        echo "✅ CUDA configuration successful!"
+    fi
+    
+    # Only build if configuration succeeded
+    if [ -d "build-standard" ] && [ -f "build-standard/CMakeCache.txt" ]; then
+        # Build
+        cmake --build build-standard --config Release -j
+        if [ $? -ne 0 ]; then
+            echo ""
+            echo "WARNING: Standard build failed! Skipping..."
+        else
+            # Copy all binaries
+            echo ""
+            echo "Copying standard binaries to Release folder..."
+            cp -f build-standard/bin/llama-server Release/cpu/linux/llama-server-standard
+            chmod +x Release/cpu/linux/llama-server-standard
+            
+            if [ -f "build-standard/bin/llama-cli" ]; then
+                cp -f build-standard/bin/llama-cli Release/cpu/linux/llama-cli-standard
+                chmod +x Release/cpu/linux/llama-cli-standard
+            fi
+            
+            if [ -f "build-standard/bin/llama-bench" ]; then
+                cp -f build-standard/bin/llama-bench Release/cpu/linux/llama-bench-standard
+                chmod +x Release/cpu/linux/llama-bench-standard
+            fi
+            
+            echo "✅ Standard binaries built successfully!"
         fi
-        
-        if [ -f "build-standard/bin/llama-bench" ]; then
-            cp -f build-standard/bin/llama-bench Release/cpu/linux/llama-bench-standard
-            chmod +x Release/cpu/linux/llama-bench-standard
-        fi
-        
-        echo "✅ Standard binaries built successfully!"
     fi
 fi
 
