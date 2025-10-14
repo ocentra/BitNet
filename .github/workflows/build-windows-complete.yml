@@ -41,6 +41,7 @@ jobs:
           Get-WmiObject -Class Win32_LogicalDisk | Select-Object DeviceID, @{Name="Size(GB)";Expression={[math]::Round($_.Size/1GB,2)}}, @{Name="FreeSpace(GB)";Expression={[math]::Round($_.FreeSpace/1GB,2)}}
       
       - name: Install dependencies
+        shell: pwsh
         run: |
           # Install CMake (latest version)
           choco install cmake --installargs 'ADD_CMAKE_TO_PATH=System' -y
@@ -49,15 +50,34 @@ jobs:
           choco install visualstudio2022buildtools -y
           choco install visualstudio2022-workload-vctools -y
           
-          # Try to install Vulkan SDK (skip if fails)
-          Write-Host "🔧 Installing Vulkan SDK..."
-          choco install vulkan-sdk -y
-          if ($LASTEXITCODE -eq 0) {
-            Write-Host "✅ Vulkan SDK installed successfully"
-            echo "VULKAN_AVAILABLE=true" >> $env:GITHUB_ENV
-          } else {
-            Write-Host "⚠️ Vulkan SDK installation failed, continuing without Vulkan support"
-            echo "VULKAN_AVAILABLE=false" >> $env:GITHUB_ENV
+          # Install Vulkan SDK via winget (most reliable method)
+          Write-Host "🔧 Installing Vulkan SDK via winget..."
+          try {
+            winget install --id KhronosGroup.VulkanSDK -e --silent --accept-source-agreements --accept-package-agreements
+            if ($LASTEXITCODE -eq 0) {
+              Write-Host "✅ Vulkan SDK installed successfully via winget"
+              echo "VULKAN_AVAILABLE=true" >> $env:GITHUB_ENV
+            } else {
+              Write-Host "⚠️ winget returned code $LASTEXITCODE, trying Chocolatey fallback..."
+              choco install vulkan-sdk -y
+              if ($LASTEXITCODE -eq 0) {
+                Write-Host "✅ Vulkan SDK installed successfully via Chocolatey"
+                echo "VULKAN_AVAILABLE=true" >> $env:GITHUB_ENV
+              } else {
+                Write-Host "⚠️ Vulkan SDK installation failed, continuing without Vulkan support"
+                echo "VULKAN_AVAILABLE=false" >> $env:GITHUB_ENV
+              }
+            }
+          } catch {
+            Write-Host "⚠️ winget failed: $($_.Exception.Message), trying Chocolatey fallback..."
+            choco install vulkan-sdk -y
+            if ($LASTEXITCODE -eq 0) {
+              Write-Host "✅ Vulkan SDK installed successfully via Chocolatey"
+              echo "VULKAN_AVAILABLE=true" >> $env:GITHUB_ENV
+            } else {
+              Write-Host "⚠️ Vulkan SDK installation failed, continuing without Vulkan support"
+              echo "VULKAN_AVAILABLE=false" >> $env:GITHUB_ENV
+            }
           }
       
       - name: Setup CUDA
