@@ -31,8 +31,16 @@ jobs:
           choco install visualstudio2022buildtools -y
           choco install visualstudio2022-workload-vctools -y
           
-          # Install Vulkan SDK
-          choco install vulkan-sdk -y
+          # Try to install Vulkan SDK (skip if fails)
+          Write-Host "🔧 Installing Vulkan SDK..."
+          try {
+            choco install vulkan-sdk --version=1.3.275.0 -y
+            Write-Host "✅ Vulkan SDK installed successfully"
+            echo "VULKAN_AVAILABLE=true" >> $env:GITHUB_ENV
+          } catch {
+            Write-Host "⚠️ Vulkan SDK installation failed, continuing without Vulkan support"
+            echo "VULKAN_AVAILABLE=false" >> $env:GITHUB_ENV
+          }
       
       - name: Setup CUDA
         uses: Jimver/cuda-toolkit@v0.2.11
@@ -64,13 +72,27 @@ jobs:
           Write-Host "🔨 Building Standard GPU Binary (CUDA + Vulkan)..."
           mkdir build-gpu
           cd build-gpu
-          # Try CUDA + Vulkan first, fallback to CUDA-only if Vulkan fails
-          if (cmake .. -DGGML_CUDA=ON -DGGML_VULKAN=ON -DLLAMA_BUILD_SERVER=ON -DLLAMA_BUILD_EXAMPLES=ON && cmake --build . --config Release) {
-            Write-Host "✅ Standard GPU build SUCCESS (CUDA + Vulkan)"
-            echo "STANDARD_GPU_SUCCESS=true" >> $env:GITHUB_ENV
-            echo "GPU_VULKAN_SUCCESS=true" >> $env:GITHUB_ENV
+          # Try CUDA + Vulkan first (if Vulkan is available), fallback to CUDA-only
+          if ($env:VULKAN_AVAILABLE -eq "true") {
+            Write-Host "🔨 Attempting CUDA + Vulkan build..."
+            if (cmake .. -DGGML_CUDA=ON -DGGML_VULKAN=ON -DLLAMA_BUILD_SERVER=ON -DLLAMA_BUILD_EXAMPLES=ON && cmake --build . --config Release) {
+              Write-Host "✅ Standard GPU build SUCCESS (CUDA + Vulkan)"
+              echo "STANDARD_GPU_SUCCESS=true" >> $env:GITHUB_ENV
+              echo "GPU_VULKAN_SUCCESS=true" >> $env:GITHUB_ENV
+            } else {
+              Write-Host "⚠️ Vulkan build failed, trying CUDA-only..."
+              if (cmake .. -DGGML_CUDA=ON -DGGML_VULKAN=OFF -DLLAMA_BUILD_SERVER=ON -DLLAMA_BUILD_EXAMPLES=ON && cmake --build . --config Release) {
+                Write-Host "✅ Standard GPU build SUCCESS (CUDA-only)"
+                echo "STANDARD_GPU_SUCCESS=true" >> $env:GITHUB_ENV
+                echo "GPU_VULKAN_SUCCESS=false" >> $env:GITHUB_ENV
+              } else {
+                Write-Host "❌ Standard GPU build FAILED"
+                echo "STANDARD_GPU_SUCCESS=false" >> $env:GITHUB_ENV
+                echo "GPU_VULKAN_SUCCESS=false" >> $env:GITHUB_ENV
+              }
+            }
           } else {
-            Write-Host "⚠️ Vulkan build failed, trying CUDA-only..."
+            Write-Host "🔨 Building CUDA-only (Vulkan not available)..."
             if (cmake .. -DGGML_CUDA=ON -DGGML_VULKAN=OFF -DLLAMA_BUILD_SERVER=ON -DLLAMA_BUILD_EXAMPLES=ON && cmake --build . --config Release) {
               Write-Host "✅ Standard GPU build SUCCESS (CUDA-only)"
               echo "STANDARD_GPU_SUCCESS=true" >> $env:GITHUB_ENV
