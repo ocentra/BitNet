@@ -24,11 +24,21 @@ jobs:
       
       - name: Clean workspace to save space
         run: |
-          # Remove unnecessary files to save disk space
-          rm -rf docs/ media/ assets/ 
+          # Aggressive cleanup to save maximum disk space
+          rm -rf docs/ media/ assets/ preset_kernels/ utils/
+          rm -rf 3rdparty/llama.cpp/docs 3rdparty/llama.cpp/media 3rdparty/llama.cpp/assets
           find . -name "*.md" -not -path "./.github/*" -delete
           find . -name "*.txt" -not -path "./requirements.txt" -not -path "./gpu/requirements.txt" -delete
-          echo "Workspace cleaned, checking space:"
+          find . -name "*.py" -not -path "./gpu/*" -not -path "./setup_env.py" -delete
+          find . -name "*.sh" -not -path "./.github/*" -delete
+          find . -name "*.bat" -not -path "./.github/*" -delete
+          find . -name "*.deb" -delete
+          find . -name "*.pdf" -delete
+          find . -name "*.png" -delete
+          find . -name "*.jpg" -delete
+          find . -name "*.jpeg" -delete
+          # Keep only essential source files and build scripts
+          echo "Aggressive cleanup completed, checking space:"
           df -h
       
       - name: Install dependencies
@@ -62,6 +72,11 @@ jobs:
           cmake .. -DLLAMA_BUILD_SERVER=ON -DLLAMA_BUILD_EXAMPLES=ON
           cmake --build . --config Release
           echo "Standard CPU build completed, checking space:"
+          df -h
+          # Clean up intermediate build files to save space
+          find . -name "*.o" -delete
+          find . -name "*.d" -delete
+          echo "Build intermediates cleaned, space after cleanup:"
           df -h
       
       - name: Build Standard GPU Binary (CUDA + Vulkan)

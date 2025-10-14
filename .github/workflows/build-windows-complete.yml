@@ -24,11 +24,20 @@ jobs:
       
       - name: Clean workspace to save space
         run: |
-          # Remove unnecessary files to save disk space
-          Remove-Item -Recurse -Force docs, media, assets -ErrorAction SilentlyContinue
+          # Aggressive cleanup to save maximum disk space
+          Remove-Item -Recurse -Force docs, media, assets, preset_kernels, utils -ErrorAction SilentlyContinue
+          Remove-Item -Recurse -Force "3rdparty\llama.cpp\docs", "3rdparty\llama.cpp\media", "3rdparty\llama.cpp\assets" -ErrorAction SilentlyContinue
           Get-ChildItem -Path . -Name "*.md" -Recurse | Where-Object { $_ -notlike ".github\*" } | Remove-Item -Force -ErrorAction SilentlyContinue
           Get-ChildItem -Path . -Name "*.txt" -Recurse | Where-Object { $_ -notlike "requirements.txt" -and $_ -notlike "gpu\requirements.txt" } | Remove-Item -Force -ErrorAction SilentlyContinue
-          Write-Host "Workspace cleaned, checking space:"
+          Get-ChildItem -Path . -Name "*.py" -Recurse | Where-Object { $_ -notlike "gpu\*" -and $_ -notlike "setup_env.py" } | Remove-Item -Force -ErrorAction SilentlyContinue
+          Get-ChildItem -Path . -Name "*.sh" -Recurse | Where-Object { $_ -notlike ".github\*" } | Remove-Item -Force -ErrorAction SilentlyContinue
+          Get-ChildItem -Path . -Name "*.bat" -Recurse | Where-Object { $_ -notlike ".github\*" } | Remove-Item -Force -ErrorAction SilentlyContinue
+          Get-ChildItem -Path . -Name "*.deb" -Recurse | Remove-Item -Force -ErrorAction SilentlyContinue
+          Get-ChildItem -Path . -Name "*.pdf" -Recurse | Remove-Item -Force -ErrorAction SilentlyContinue
+          Get-ChildItem -Path . -Name "*.png" -Recurse | Remove-Item -Force -ErrorAction SilentlyContinue
+          Get-ChildItem -Path . -Name "*.jpg" -Recurse | Remove-Item -Force -ErrorAction SilentlyContinue
+          Get-ChildItem -Path . -Name "*.jpeg" -Recurse | Remove-Item -Force -ErrorAction SilentlyContinue
+          Write-Host "Aggressive cleanup completed, checking space:"
           Get-WmiObject -Class Win32_LogicalDisk | Select-Object DeviceID, @{Name="Size(GB)";Expression={[math]::Round($_.Size/1GB,2)}}, @{Name="FreeSpace(GB)";Expression={[math]::Round($_.FreeSpace/1GB,2)}}
       
       - name: Install dependencies
