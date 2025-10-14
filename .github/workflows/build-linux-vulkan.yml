@@ -22,6 +22,15 @@ jobs:
         with:
           submodules: recursive
       
+      - name: Clean workspace to save space
+        run: |
+          # Remove unnecessary files to save disk space
+          rm -rf docs/ media/ assets/ 
+          find . -name "*.md" -not -path "./.github/*" -delete
+          find . -name "*.txt" -not -path "./requirements.txt" -not -path "./gpu/requirements.txt" -delete
+          echo "Workspace cleaned, checking space:"
+          df -h
+      
       - name: Install dependencies
         run: |
           sudo apt-get update
@@ -52,6 +61,8 @@ jobs:
           mkdir build-standard && cd build-standard
           cmake .. -DLLAMA_BUILD_SERVER=ON -DLLAMA_BUILD_EXAMPLES=ON
           cmake --build . --config Release
+          echo "Standard CPU build completed, checking space:"
+          df -h
       
       - name: Build Standard GPU Binary (CUDA + Vulkan)
         run: |
