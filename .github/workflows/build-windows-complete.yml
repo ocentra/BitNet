@@ -39,6 +39,12 @@ jobs:
           Get-ChildItem -Path . -Name "*.jpeg" -Recurse | Remove-Item -Force -ErrorAction SilentlyContinue
           Write-Host "Aggressive cleanup completed, checking space:"
           Get-WmiObject -Class Win32_LogicalDisk | Select-Object DeviceID, @{Name="Size(GB)";Expression={[math]::Round($_.Size/1GB,2)}}, @{Name="FreeSpace(GB)";Expression={[math]::Round($_.FreeSpace/1GB,2)}}
+          
+          # Debug information
+          Write-Host "Debug: Current directory contents:"
+          Get-ChildItem -Path . -Force
+          Write-Host "Debug: Environment variables:"
+          Get-ChildItem Env:
       
       - name: Install dependencies
         shell: pwsh
@@ -53,12 +59,99 @@ jobs:
           # Install Vulkan SDK via winget (most reliable method)
           Write-Host "🔧 Installing Vulkan SDK via winget..."
           try {
+            Write-Output "Attempting winget install..."
             winget install --id KhronosGroup.VulkanSDK -e --silent --accept-source-agreements --accept-package-agreements
             if ($LASTEXITCODE -eq 0) {
               Write-Host "✅ Vulkan SDK installed successfully via winget"
               echo "VULKAN_AVAILABLE=true" >> $env:GITHUB_ENV
             } else {
-              Write-Host "⚠️ winget returned code $LASTEXITCODE, trying Chocolatey fallback..."
+              Write-Host "⚠️ winget returned code $LASTEXITCODE, trying manual install..."
+              # Try manual installation as fallback
+              $found = $false
+              $VERSIONS = '1.3.239.0,1.3.250.0,1.3.268.0,1.3.275.0'
+              foreach ($ver in $VERSIONS.Split(',')) {
+                $ver = $ver.Trim()
+                $exe = "VulkanSDK-$ver-Installer.exe"
+                $url = "https://sdk.lunarg.com/sdk/download/$ver/windows/$exe"
+                Write-Output "Testing $url"
+                $resp = Invoke-WebRequest -Uri $url -Method Head -UseBasicParsing -ErrorAction SilentlyContinue
+                if ($resp -and $resp.StatusCode -eq 200) {
+                  Write-Output "Found installer for $ver, downloading..."
+                  Invoke-WebRequest -Uri $url -OutFile $exe -UseBasicParsing
+                  Write-Output "Running installer (silent)..."
+                  Start-Process -FilePath $exe -ArgumentList '/S' -Wait
+                  # Set environment for subsequent steps
+                  $instPath = "C:\VulkanSDK\$ver"
+                  if (-Not (Test-Path $instPath) -and (Test-Path "C:\VulkanSDK")) {
+                    # try to find installed version directory
+                    $dirs = Get-ChildItem -Directory C:\VulkanSDK -ErrorAction SilentlyContinue
+                    if ($dirs) { $instPath = $dirs[0].FullName }
+                  }
+                  if (Test-Path $instPath) {
+                    Write-Output "Adding ${instPath}\Bin to PATH for remaining steps"
+                    echo "VULKAN_SDK=$instPath" >> $env:GITHUB_ENV
+                    echo "${instPath}\Bin" >> $env:GITHUB_PATH
+                    $found = $true
+                    break
+                  }
+                } else {
+                  Write-Output "No installer at $url (status: $($resp.StatusCode))"
+                }
+              }
+              if ($found) {
+                Write-Host "✅ Vulkan SDK installed successfully via manual install"
+                echo "VULKAN_AVAILABLE=true" >> $env:GITHUB_ENV
+              } else {
+                Write-Host "⚠️ Manual install failed, trying Chocolatey fallback..."
+                choco install vulkan-sdk -y
+                if ($LASTEXITCODE -eq 0) {
+                  Write-Host "✅ Vulkan SDK installed successfully via Chocolatey"
+                  echo "VULKAN_AVAILABLE=true" >> $env:GITHUB_ENV
+                } else {
+                  Write-Host "⚠️ Vulkan SDK installation failed, continuing without Vulkan support"
+                  echo "VULKAN_AVAILABLE=false" >> $env:GITHUB_ENV
+                }
+              }
+            }
+          } catch {
+            Write-Host "⚠️ winget failed: $($_.Exception.Message), trying manual install..."
+            # Try manual installation as fallback
+            $found = $false
+            $VERSIONS = '1.3.239.0,1.3.250.0,1.3.268.0,1.3.275.0'
+            foreach ($ver in $VERSIONS.Split(',')) {
+              $ver = $ver.Trim()
+              $exe = "VulkanSDK-$ver-Installer.exe"
+              $url = "https://sdk.lunarg.com/sdk/download/$ver/windows/$exe"
+              Write-Output "Testing $url"
+              $resp = Invoke-WebRequest -Uri $url -Method Head -UseBasicParsing -ErrorAction SilentlyContinue
+              if ($resp -and $resp.StatusCode -eq 200) {
+                Write-Output "Found installer for $ver, downloading..."
+                Invoke-WebRequest -Uri $url -OutFile $exe -UseBasicParsing
+                Write-Output "Running installer (silent)..."
+                Start-Process -FilePath $exe -ArgumentList '/S' -Wait
+                # Set environment for subsequent steps
+                $instPath = "C:\VulkanSDK\$ver"
+                if (-Not (Test-Path $instPath) -and (Test-Path "C:\VulkanSDK")) {
+                  # try to find installed version directory
+                  $dirs = Get-ChildItem -Directory C:\VulkanSDK -ErrorAction SilentlyContinue
+                  if ($dirs) { $instPath = $dirs[0].FullName }
+                }
+                if (Test-Path $instPath) {
+                  Write-Output "Adding ${instPath}\Bin to PATH for remaining steps"
+                  echo "VULKAN_SDK=$instPath" >> $env:GITHUB_ENV
+                  echo "${instPath}\Bin" >> $env:GITHUB_PATH
+                  $found = $true
+                  break
+                }
+              } else {
+                Write-Output "No installer at $url (status: $($resp.StatusCode))"
+              }
+            }
+            if ($found) {
+              Write-Host "✅ Vulkan SDK installed successfully via manual install"
+              echo "VULKAN_AVAILABLE=true" >> $env:GITHUB_ENV
+            } else {
+              Write-Host "⚠️ Manual install failed, trying Chocolatey fallback..."
               choco install vulkan-sdk -y
               if ($LASTEXITCODE -eq 0) {
                 Write-Host "✅ Vulkan SDK installed successfully via Chocolatey"
@@ -68,40 +161,91 @@ jobs:
                 echo "VULKAN_AVAILABLE=false" >> $env:GITHUB_ENV
               }
             }
-          } catch {
-            Write-Host "⚠️ winget failed: $($_.Exception.Message), trying Chocolatey fallback..."
-            choco install vulkan-sdk -y
-            if ($LASTEXITCODE -eq 0) {
-              Write-Host "✅ Vulkan SDK installed successfully via Chocolatey"
-              echo "VULKAN_AVAILABLE=true" >> $env:GITHUB_ENV
-            } else {
-              Write-Host "⚠️ Vulkan SDK installation failed, continuing without Vulkan support"
-              echo "VULKAN_AVAILABLE=false" >> $env:GITHUB_ENV
-            }
           }
+          
+          # Verify Vulkan installation
+          Write-Host "🔍 Verifying Vulkan installation..."
+          $vulkanOk = $false
+          $vulkanSource = ''
+          if (Get-Command vulkaninfo -ErrorAction SilentlyContinue) {
+            $vulkanOk = $true; $vulkanSource = 'vulkaninfo command'
+          } elseif ($env:VULKAN_SDK) {
+            $vulkanOk = $true; $vulkanSource = 'VULKAN_SDK env'
+          }
+          
+          if ($vulkanOk) {
+            Write-Host "✅ Vulkan SDK detected (source: $vulkanSource)."
+            # Show Vulkan info if available
+            if (Get-Command vulkaninfo -ErrorAction SilentlyContinue) {
+              vulkaninfo --summary
+            }
+          } else {
+            Write-Host "⚠️ Vulkan SDK not found after all attempts."
+          }
+          
+          # Debug information after dependency installation
+          Write-Host "Debug: CMake version:"
+          cmake --version
+          Write-Host "Debug: Visual Studio installation:"
+          Get-ChildItem -Path "C:\Program Files\Microsoft Visual Studio" -Recurse -Filter "vcvarsall.bat" -ErrorAction SilentlyContinue | Select-Object -First 1 | ForEach-Object { Write-Host "Found: $($_.FullName)" }
+          Write-Host "Debug: CUDA installation:"
+          Get-ChildItem -Path "C:\Program Files\NVIDIA GPU Computing Toolkit" -ErrorAction SilentlyContinue
+          if ($env:VULKAN_SDK) { Write-Host "Debug: Vulkan SDK path: $env:VULKAN_SDK" }
+          Write-Host "Debug: PATH contains key directories:"
+          $env:PATH -split ';' | Where-Object { $_ -like "*Visual Studio*" -or $_ -like "*NVIDIA*" -or $_ -like "*Vulkan*" -or $_ -like "*CMake*" } | ForEach-Object { Write-Host "  $_" }
       
       - name: Setup CUDA
         uses: Jimver/cuda-toolkit@v0.2.11
         with:
           cuda: '12.1'
-          method: 'chocolatey'
+          method: 'network'
+      
+      - name: Verify CUDA installation
+        run: |
+          Write-Host "🔍 Verifying CUDA installation..."
+          if (Get-Command nvcc -ErrorAction SilentlyContinue) {
+            Write-Host "✅ CUDA compiler (nvcc) found:"
+            nvcc --version
+          } else {
+            Write-Host "⚠️ CUDA compiler (nvcc) not found in PATH"
+          }
+          
+          # Check CUDA environment variables
+          if ($env:CUDA_PATH) { Write-Host "Debug: CUDA_PATH = $env:CUDA_PATH" }
+          if ($env:CUDA_HOME) { Write-Host "Debug: CUDA_HOME = $env:CUDA_HOME" }
       
       - name: Setup Python environment for GPU
         run: |
           python -m pip install --upgrade pip
           python -m pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118
           python -m pip install -r gpu/requirements.txt
+          
+          # Debug information after Python setup
+          Write-Host "Debug: Python version:"
+          python --version
+          Write-Host "Debug: Python packages:"
+          pip list
+          Write-Host "Debug: CUDA availability in Python:"
+          python -c "import torch; print(f'PyTorch version: {torch.__version__}'); print(f'CUDA available: {torch.cuda.is_available()}'); print(f'CUDA version: {torch.version.cuda if torch.cuda.is_available() else "N/A"}')"
       
       - name: Build Standard CPU Binary
         run: |
           Write-Host "🔨 Building Standard CPU Binary..."
           mkdir build-standard
           cd build-standard
-          if (cmake .. -DLLAMA_BUILD_SERVER=ON -DLLAMA_BUILD_EXAMPLES=ON && cmake --build . --config Release) {
-            Write-Host "✅ Standard CPU build SUCCESS"
-            echo "STANDARD_CPU_SUCCESS=true" >> $env:GITHUB_ENV
+          $cmakeResult = cmake .. -DLLAMA_BUILD_SERVER=ON -DLLAMA_BUILD_EXAMPLES=ON
+          if ($cmakeResult -eq $null -or $LASTEXITCODE -eq 0) {
+            Write-Host "✅ CMake configuration SUCCESS"
+            $buildResult = cmake --build . --config Release
+            if ($buildResult -eq $null -or $LASTEXITCODE -eq 0) {
+              Write-Host "✅ Standard CPU build SUCCESS"
+              echo "STANDARD_CPU_SUCCESS=true" >> $env:GITHUB_ENV
+            } else {
+              Write-Host "❌ Standard CPU build FAILED"
+              echo "STANDARD_CPU_SUCCESS=false" >> $env:GITHUB_ENV
+            }
           } else {
-            Write-Host "❌ Standard CPU build FAILED"
+            Write-Host "❌ CMake configuration FAILED"
             echo "STANDARD_CPU_SUCCESS=false" >> $env:GITHUB_ENV
           }
       
@@ -113,13 +257,47 @@ jobs:
           # Try CUDA + Vulkan first (if Vulkan is available), fallback to CUDA-only
           if ($env:VULKAN_AVAILABLE -eq "true") {
             Write-Host "🔨 Attempting CUDA + Vulkan build..."
-            if (cmake .. -DGGML_CUDA=ON -DGGML_VULKAN=ON -DLLAMA_BUILD_SERVER=ON -DLLAMA_BUILD_EXAMPLES=ON && cmake --build . --config Release) {
-              Write-Host "✅ Standard GPU build SUCCESS (CUDA + Vulkan)"
-              echo "STANDARD_GPU_SUCCESS=true" >> $env:GITHUB_ENV
-              echo "GPU_VULKAN_SUCCESS=true" >> $env:GITHUB_ENV
+            $cmakeResult = cmake .. -DGGML_CUDA=ON -DGGML_VULKAN=ON -DLLAMA_BUILD_SERVER=ON -DLLAMA_BUILD_EXAMPLES=ON
+            if ($cmakeResult -eq $null -or $LASTEXITCODE -eq 0) {
+              Write-Host "✅ CMake configuration SUCCESS (CUDA + Vulkan)"
+              $buildResult = cmake --build . --config Release
+              if ($buildResult -eq $null -or $LASTEXITCODE -eq 0) {
+                Write-Host "✅ Standard GPU build SUCCESS (CUDA + Vulkan)"
+                echo "STANDARD_GPU_SUCCESS=true" >> $env:GITHUB_ENV
+                echo "GPU_VULKAN_SUCCESS=true" >> $env:GITHUB_ENV
+              } else {
+                Write-Host "⚠️ Vulkan build failed, trying CUDA-only..."
+                $cmakeResult = cmake .. -DGGML_CUDA=ON -DGGML_VULKAN=OFF -DLLAMA_BUILD_SERVER=ON -DLLAMA_BUILD_EXAMPLES=ON
+                if ($cmakeResult -eq $null -or $LASTEXITCODE -eq 0) {
+                  Write-Host "✅ CMake configuration SUCCESS (CUDA-only)"
+                  $buildResult = cmake --build . --config Release
+                  if ($buildResult -eq $null -or $LASTEXITCODE -eq 0) {
+                    Write-Host "✅ Standard GPU build SUCCESS (CUDA-only)"
+                    echo "STANDARD_GPU_SUCCESS=true" >> $env:GITHUB_ENV
+                    echo "GPU_VULKAN_SUCCESS=false" >> $env:GITHUB_ENV
+                  } else {
+                    Write-Host "❌ Standard GPU build FAILED"
+                    echo "STANDARD_GPU_SUCCESS=false" >> $env:GITHUB_ENV
+                    echo "GPU_VULKAN_SUCCESS=false" >> $env:GITHUB_ENV
+                  }
+                } else {
+                  Write-Host "❌ CMake configuration FAILED (CUDA-only)"
+                  echo "STANDARD_GPU_SUCCESS=false" >> $env:GITHUB_ENV
+                  echo "GPU_VULKAN_SUCCESS=false" >> $env:GITHUB_ENV
+                }
+              }
             } else {
-              Write-Host "⚠️ Vulkan build failed, trying CUDA-only..."
-              if (cmake .. -DGGML_CUDA=ON -DGGML_VULKAN=OFF -DLLAMA_BUILD_SERVER=ON -DLLAMA_BUILD_EXAMPLES=ON && cmake --build . --config Release) {
+              Write-Host "❌ CMake configuration FAILED (CUDA + Vulkan)"
+              echo "STANDARD_GPU_SUCCESS=false" >> $env:GITHUB_ENV
+              echo "GPU_VULKAN_SUCCESS=false" >> $env:GITHUB_ENV
+            }
+          } else {
+            Write-Host "🔨 Building CUDA-only (Vulkan not available)..."
+            $cmakeResult = cmake .. -DGGML_CUDA=ON -DGGML_VULKAN=OFF -DLLAMA_BUILD_SERVER=ON -DLLAMA_BUILD_EXAMPLES=ON
+            if ($cmakeResult -eq $null -or $LASTEXITCODE -eq 0) {
+              Write-Host "✅ CMake configuration SUCCESS (CUDA-only)"
+              $buildResult = cmake --build . --config Release
+              if ($buildResult -eq $null -or $LASTEXITCODE -eq 0) {
                 Write-Host "✅ Standard GPU build SUCCESS (CUDA-only)"
                 echo "STANDARD_GPU_SUCCESS=true" >> $env:GITHUB_ENV
                 echo "GPU_VULKAN_SUCCESS=false" >> $env:GITHUB_ENV
@@ -128,15 +306,8 @@ jobs:
                 echo "STANDARD_GPU_SUCCESS=false" >> $env:GITHUB_ENV
                 echo "GPU_VULKAN_SUCCESS=false" >> $env:GITHUB_ENV
               }
-            }
-          } else {
-            Write-Host "🔨 Building CUDA-only (Vulkan not available)..."
-            if (cmake .. -DGGML_CUDA=ON -DGGML_VULKAN=OFF -DLLAMA_BUILD_SERVER=ON -DLLAMA_BUILD_EXAMPLES=ON && cmake --build . --config Release) {
-              Write-Host "✅ Standard GPU build SUCCESS (CUDA-only)"
-              echo "STANDARD_GPU_SUCCESS=true" >> $env:GITHUB_ENV
-              echo "GPU_VULKAN_SUCCESS=false" >> $env:GITHUB_ENV
             } else {
-              Write-Host "❌ Standard GPU build FAILED"
+              Write-Host "❌ CMake configuration FAILED (CUDA-only)"
               echo "STANDARD_GPU_SUCCESS=false" >> $env:GITHUB_ENV
               echo "GPU_VULKAN_SUCCESS=false" >> $env:GITHUB_ENV
             }
@@ -157,11 +328,19 @@ jobs:
           $newContent += "#include <immintrin.h>"
           $newContent += $content[1..($content.Length-1)]  # Rest of content
           $newContent | Set-Content include\bitnet-lut-kernels.h
-          if (cmake .. -DBITNET_ARM_TL1=ON -DLLAMA_BUILD_SERVER=ON -DLLAMA_BUILD_EXAMPLES=ON && cmake --build . --config Release) {
-            Write-Host "✅ BitNet CPU build SUCCESS"
-            echo "BITNET_CPU_SUCCESS=true" >> $env:GITHUB_ENV
+          $cmakeResult = cmake .. -DBITNET_ARM_TL1=ON -DLLAMA_BUILD_SERVER=ON -DLLAMA_BUILD_EXAMPLES=ON
+          if ($cmakeResult -eq $null -or $LASTEXITCODE -eq 0) {
+            Write-Host "✅ CMake configuration SUCCESS (BitNet CPU)"
+            $buildResult = cmake --build . --config Release
+            if ($buildResult -eq $null -or $LASTEXITCODE -eq 0) {
+              Write-Host "✅ BitNet CPU build SUCCESS"
+              echo "BITNET_CPU_SUCCESS=true" >> $env:GITHUB_ENV
+            } else {
+              Write-Host "❌ BitNet CPU build FAILED"
+              echo "BITNET_CPU_SUCCESS=false" >> $env:GITHUB_ENV
+            }
           } else {
-            Write-Host "❌ BitNet CPU build FAILED"
+            Write-Host "❌ CMake configuration FAILED (BitNet CPU)"
             echo "BITNET_CPU_SUCCESS=false" >> $env:GITHUB_ENV
           }
       
@@ -173,7 +352,8 @@ jobs:
           python -m pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118
           # Then install other requirements (may skip conflicting torch versions)
           python -m pip install -r requirements.txt --no-deps || echo "Some requirements skipped due to conflicts"
-          if (python setup.py build_ext --inplace) {
+          $buildResult = python setup.py build_ext --inplace
+          if ($buildResult -eq $null -or $LASTEXITCODE -eq 0) {
             Write-Host "✅ BitNet GPU kernels build SUCCESS"
             echo "BITNET_GPU_SUCCESS=true" >> $env:GITHUB_ENV
           } else {
@@ -187,6 +367,10 @@ jobs:
           mkdir -p Release\cpu\windows
           mkdir -p Release\gpu\windows
           
+          # Debug information before copying artifacts
+          Write-Host "Debug: Current directory structure:"
+          Get-ChildItem -Recurse -Force | Where-Object { $_.Name -like "build-*" -or $_.Name -like "Release" } | Select-Object FullName
+          
           # Copy Standard CPU binaries - only if build succeeded
           if ($env:STANDARD_CPU_SUCCESS -eq "true" -and (Test-Path "build-standard\bin\Release\llama-server.exe")) {
             copy build-standard\bin\Release\llama-server.exe Release\cpu\windows\llama-server-standard.exe
@@ -195,6 +379,13 @@ jobs:
             Write-Host "✅ Standard CPU binaries copied"
           } else {
             Write-Host "⚠️ Standard CPU build failed or binaries not found - skipping"
+            if (-not (Test-Path "build-standard\bin\Release\llama-server.exe")) {
+              Write-Host "Debug: Standard CPU binary not found at expected location"
+              if (Test-Path "build-standard") {
+                Write-Host "Debug: build-standard directory contents:"
+                Get-ChildItem -Recurse "build-standard" -ErrorAction SilentlyContinue | Select-Object FullName
+              }
+            }
           }
           
           # Copy Standard GPU binaries - only if build succeeded
@@ -206,6 +397,13 @@ jobs:
             Write-Host "✅ Standard GPU binaries copied ($gpuSuffix)"
           } else {
             Write-Host "⚠️ Standard GPU build failed or binaries not found - skipping"
+            if (-not (Test-Path "build-gpu\bin\Release\llama-server.exe")) {
+              Write-Host "Debug: Standard GPU binary not found at expected location"
+              if (Test-Path "build-gpu") {
+                Write-Host "Debug: build-gpu directory contents:"
+                Get-ChildItem -Recurse "build-gpu" -ErrorAction SilentlyContinue | Select-Object FullName
+              }
+            }
           }
           
           # Copy BitNet CPU binaries - only if build succeeded
@@ -216,6 +414,13 @@ jobs:
             Write-Host "✅ BitNet CPU binaries copied"
           } else {
             Write-Host "⚠️ BitNet CPU build failed or binaries not found - skipping"
+            if (-not (Test-Path "build-bitnet\bin\Release\llama-server.exe")) {
+              Write-Host "Debug: BitNet CPU binary not found at expected location"
+              if (Test-Path "build-bitnet") {
+                Write-Host "Debug: build-bitnet directory contents:"
+                Get-ChildItem -Recurse "build-bitnet" -ErrorAction SilentlyContinue | Select-Object FullName
+              }
+            }
           }
           
           # Copy BitNet GPU modules - always try to copy Python files
@@ -231,6 +436,10 @@ jobs:
             Write-Host "✅ BitNet GPU kernel copied"
           } else {
             Write-Host "⚠️ BitNet GPU kernel build failed or not found - skipping"
+            if (Test-Path "gpu\bitnet_kernels") {
+              Write-Host "Debug: bitnet_kernels directory contents:"
+              Get-ChildItem "gpu\bitnet_kernels" -ErrorAction SilentlyContinue | Select-Object FullName
+            }
           }
           
           # Create build summary
@@ -256,6 +465,14 @@ jobs:
         with:
           name: gpu-windows-complete
           path: Release/gpu/windows/
+      
+      - name: Final debug information
+        run: |
+          Write-Host "🔍 Final debug information:"
+          Write-Host "Final Release/cpu/windows contents:"
+          Get-ChildItem -Recurse Release/cpu/windows -ErrorAction SilentlyContinue | Select-Object FullName
+          Write-Host "Final Release/gpu/windows contents:"
+          Get-ChildItem -Recurse Release/gpu/windows -ErrorAction SilentlyContinue | Select-Object FullName
 
   # ============================================================================
   # Create Release Placeholder (Optional)
