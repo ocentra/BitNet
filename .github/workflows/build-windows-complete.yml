@@ -63,19 +63,31 @@ jobs:
           choco install visualstudio2022buildtools -y
           choco install visualstudio2022-workload-vctools -y
 
-          # Install Vulkan SDK via winget (most reliable method)
-          Write-Host "🔧 Installing Vulkan SDK via winget..."
+          # Install Vulkan SDK using multi-try approach (same as windows-vulkan-test.yml)
+          Write-Host "🔧 Installing Vulkan SDK using multi-try approach..."
+          
+          # Try 1: winget
+          Write-Host "Try 1: Installing Vulkan SDK via winget..."
+          $wingetSuccess = $false
           try {
             Write-Output "Attempting winget install..."
-            winget install --id KhronosGroup.VulkanSDK -e --silent --accept-source-agreements --accept-package-agreements
-            if ($LASTEXITCODE -eq 0) {
-              Write-Host "✅ Vulkan SDK installed successfully via winget"
-              # Do NOT set VULKAN_AVAILABLE here — verify with vulkaninfo below to ensure drivers/ICD exist
+            $result = Start-Process -FilePath "winget" -ArgumentList "install", "--id", "KhronosGroup.VulkanSDK", "-e", "--silent", "--accept-source-agreements", "--accept-package-agreements" -Wait -PassThru -NoNewWindow
+            if ($result.ExitCode -eq 0) {
+              Write-Output "winget install succeeded"
+              $wingetSuccess = $true
             } else {
-              Write-Host "⚠️ winget returned code $LASTEXITCODE, trying manual install..."
-              # Try manual installation as fallback
-              $found = $false
-              $VERSIONS = '1.3.239.0,1.3.250.0,1.3.268.0,1.3.275.0'
+              Write-Output "winget returned code $($result.ExitCode)"
+            }
+          } catch {
+            Write-Output "winget install failed: $($_.Exception.Message)"
+          }
+
+          # Try 2: Manual installation from LunarG (if winget failed)
+          $manualSuccess = $false
+          if (-not $wingetSuccess) {
+            Write-Host "Try 2: Installing Vulkan SDK manually from LunarG..."
+            try {
+              $VERSIONS = '1.3.275.0,1.3.268.0,1.3.250.0,1.3.239.0'
               foreach ($ver in $VERSIONS.Split(',')) {
                 $ver = $ver.Trim()
                 $exe = "VulkanSDK-$ver-Installer.exe"
@@ -86,120 +98,71 @@ jobs:
                   Write-Output "Found installer for $ver, downloading..."
                   Invoke-WebRequest -Uri $url -OutFile $exe -UseBasicParsing
                   Write-Output "Running installer (silent)..."
-                  Start-Process -FilePath $exe -ArgumentList '/S' -Wait
-                  # Set environment for subsequent steps
-                  $instPath = "C:\VulkanSDK\$ver"
-                  if (-Not (Test-Path $instPath) -and (Test-Path "C:\VulkanSDK")) {
-                    # try to find installed version directory
-                    $dirs = Get-ChildItem -Directory C:\VulkanSDK -ErrorAction SilentlyContinue
-                    if ($dirs) { $instPath = $dirs[0].FullName }
-                  }
-                  if (Test-Path $instPath) {
-                    Write-Output "Adding ${instPath}\Bin to PATH for remaining steps"
-                    echo "VULKAN_SDK=$instPath" >> $env:GITHUB_ENV
-                    echo "${instPath}\Bin" >> $env:GITHUB_PATH
-                    $found = $true
+                  $installResult = Start-Process -FilePath $exe -ArgumentList '/S' -Wait -PassThru -NoNewWindow
+                  if ($installResult.ExitCode -eq 0) {
+                    Write-Output "Manual install succeeded"
+                    # Set environment for subsequent steps
+                    $instPath = "C:\VulkanSDK\$ver"
+                    if (-Not (Test-Path $instPath) -and (Test-Path "C:\VulkanSDK")) {
+                      # try to find installed version directory
+                      $dirs = Get-ChildItem -Directory C:\VulkanSDK -ErrorAction SilentlyContinue
+                      if ($dirs) { $instPath = $dirs[0].FullName }
+                    }
+                    if (Test-Path $instPath) {
+                      Write-Output "Adding ${instPath}\Bin to PATH for remaining steps"
+                      echo "VULKAN_SDK=$instPath" >> $env:GITHUB_ENV
+                      echo "${instPath}\Bin" >> $env:GITHUB_PATH
+                    }
+                    $manualSuccess = $true
                     break
+                  } else {
+                    Write-Output "Installer failed with code $($installResult.ExitCode)"
                   }
                 } else {
                   Write-Output "No installer at $url (status: $($resp.StatusCode))"
                 }
               }
-              if ($found) {
-                Write-Host "✅ Vulkan SDK installed successfully via manual install"
-                # VULKAN_AVAILABLE will be determined by running vulkaninfo below
-              } else {
-                Write-Host "⚠️ Manual install failed, trying Chocolatey fallback..."
-                choco install vulkan-sdk -y
-                if ($LASTEXITCODE -eq 0) {
-                  Write-Host "✅ Vulkan SDK installed successfully via Chocolatey"
-                  # VULKAN_AVAILABLE will be determined by running vulkaninfo below
-                } else {
-                  Write-Host "⚠️ Vulkan SDK installation failed, continuing without Vulkan support"
-                  echo "VULKAN_AVAILABLE=false" >> $env:GITHUB_ENV
-                }
-              }
-            }
-          } catch {
-            Write-Host "⚠️ winget failed: $($_.Exception.Message), trying manual install..."
-            # Try manual installation as fallback
-            $found = $false
-            $VERSIONS = '1.3.239.0,1.3.250.0,1.3.268.0,1.3.275.0'
-            foreach ($ver in $VERSIONS.Split(',')) {
-              $ver = $ver.Trim()
-              $exe = "VulkanSDK-$ver-Installer.exe"
-              $url = "https://sdk.lunarg.com/sdk/download/$ver/windows/$exe"
-              Write-Output "Testing $url"
-              $resp = Invoke-WebRequest -Uri $url -Method Head -UseBasicParsing -ErrorAction SilentlyContinue
-              if ($resp -and $resp.StatusCode -eq 200) {
-                Write-Output "Found installer for $ver, downloading..."
-                Invoke-WebRequest -Uri $url -OutFile $exe -UseBasicParsing
-                Write-Output "Running installer (silent)..."
-                Start-Process -FilePath $exe -ArgumentList '/S' -Wait
-                # Set environment for subsequent steps
-                $instPath = "C:\VulkanSDK\$ver"
-                if (-Not (Test-Path $instPath) -and (Test-Path "C:\VulkanSDK")) {
-                  # try to find installed version directory
-                  $dirs = Get-ChildItem -Directory C:\VulkanSDK -ErrorAction SilentlyContinue
-                  if ($dirs) { $instPath = $dirs[0].FullName }
-                }
-                if (Test-Path $instPath) {
-                  Write-Output "Adding ${instPath}\Bin to PATH for remaining steps"
-                  echo "VULKAN_SDK=$instPath" >> $env:GITHUB_ENV
-                  echo "${instPath}\Bin" >> $env:GITHUB_PATH
-                  $found = $true
-                  break
-                }
-              } else {
-                Write-Output "No installer at $url (status: $($resp.StatusCode))"
-              }
-            }
-            if ($found) {
-              Write-Host "✅ Vulkan SDK installed successfully via manual install"
-              # VULKAN_AVAILABLE will be determined by running vulkaninfo below
-            } else {
-              Write-Host "⚠️ Manual install failed, trying Chocolatey fallback..."
-              choco install vulkan-sdk -y
-              if ($LASTEXITCODE -eq 0) {
-                Write-Host "✅ Vulkan SDK installed successfully via Chocolatey"
-                # VULKAN_AVAILABLE will be determined by running vulkaninfo below
-              } else {
-                Write-Host "⚠️ Vulkan SDK installation failed, continuing without Vulkan support"
-                echo "VULKAN_AVAILABLE=false" >> $env:GITHUB_ENV
-              }
+              if (-not $manualSuccess) { Write-Output "No LunarG installer found for any tried version." }
+            } catch {
+              Write-Output "Manual install failed: $($_.Exception.Message)"
             }
           }
 
-          # Verify Vulkan installation
-          Write-Host "🔍 Verifying Vulkan installation..."
-          $vulkanOk = $false
-          $vulkanSource = ''
-
-          # Prefer running vulkaninfo to confirm drivers/ICD presence. If vulkaninfo exists, its exit code determines availability.
-          if (Get-Command vulkaninfo -ErrorAction SilentlyContinue) {
-            Write-Host "Found vulkaninfo, running summary..."
+          # Try 3: Chocolatey (last resort)
+          $chocoSuccess = $false
+          if (-not $wingetSuccess -and -not $manualSuccess) {
+            Write-Host "Try 3: Installing Vulkan SDK via Chocolatey..."
             try {
-              $vulkanOut = & vulkaninfo --summary 2>&1
-              if ($LASTEXITCODE -eq 0) {
-                $vulkanOk = $true; $vulkanSource = 'vulkaninfo command'
-                Write-Host "✅ Vulkan SDK detected (source: $vulkanSource)."
-                echo "VULKAN_AVAILABLE=true" >> $env:GITHUB_ENV
+              Write-Output "Attempting Chocolatey install..."
+              $chocoResult = Start-Process -FilePath "choco" -ArgumentList "install", "vulkan-sdk", "-y" -Wait -PassThru -NoNewWindow
+              if ($chocoResult.ExitCode -eq 0) {
+                Write-Output "Chocolatey install succeeded"
+                $chocoSuccess = $true
               } else {
-                Write-Host "⚠️ vulkaninfo failed (likely no Vulkan driver or ICD):"
-                Write-Host $vulkanOut
-                Write-Host "⚠️ Disabling Vulkan support for CI (no driver available)."
-                echo "VULKAN_AVAILABLE=false" >> $env:GITHUB_ENV
+                Write-Output "choco install returned code $($chocoResult.ExitCode)"
               }
             } catch {
-              Write-Host "⚠️ Error running vulkaninfo: $($_.Exception.Message)"
-              echo "VULKAN_AVAILABLE=false" >> $env:GITHUB_ENV
+              Write-Output "Chocolatey install failed: $($_.Exception.Message)"
             }
+          }
+
+          # Final verification
+          Write-Host "🔍 Verifying Vulkan installation..."
+          $vulkanAvailable = $false
+          
+          if (Get-Command vulkaninfo -ErrorAction SilentlyContinue) {
+            $vulkanAvailable = $true
+            Write-Host "✅ vulkaninfo command found"
           } elseif ($env:VULKAN_SDK) {
-            # If VULKAN_SDK env is set but vulkaninfo isn't present, assume SDK tools may be present but drivers are likely missing on hosted runners.
-            Write-Host "VULKAN_SDK env present; skipping vulkaninfo check on CI but disabling Vulkan support to avoid build failures."
-            echo "VULKAN_AVAILABLE=false" >> $env:GITHUB_ENV
+            $vulkanAvailable = $true
+            Write-Host "✅ VULKAN_SDK environment variable set"
+          }
+          
+          if ($vulkanAvailable) {
+            Write-Host "✅ Vulkan SDK is available"
+            echo "VULKAN_AVAILABLE=true" >> $env:GITHUB_ENV
           } else {
-            Write-Host "⚠️ Vulkan SDK not found after all attempts."
+            Write-Host "⚠️ Vulkan SDK is not available, continuing without Vulkan support"
             echo "VULKAN_AVAILABLE=false" >> $env:GITHUB_ENV
           }
 
