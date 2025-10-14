@@ -42,11 +42,11 @@ jobs:
           
           # Try to install Vulkan SDK (skip if fails)
           Write-Host "🔧 Installing Vulkan SDK..."
-          try {
-            choco install vulkan-sdk --version=1.3.275.0 -y
+          choco install vulkan-sdk -y
+          if ($LASTEXITCODE -eq 0) {
             Write-Host "✅ Vulkan SDK installed successfully"
             echo "VULKAN_AVAILABLE=true" >> $env:GITHUB_ENV
-          } catch {
+          } else {
             Write-Host "⚠️ Vulkan SDK installation failed, continuing without Vulkan support"
             echo "VULKAN_AVAILABLE=false" >> $env:GITHUB_ENV
           }
