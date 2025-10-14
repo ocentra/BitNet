@@ -1,0 +1,225 @@
+name: Build Windows Binaries (Complete)
+
+on:
+  workflow_dispatch:
+    inputs:
+      create_release:
+        description: 'Create GitHub Release after build'
+        required: false
+        default: 'false'
+
+jobs:
+  # ============================================================================
+  # Build CPU + GPU Binaries for Windows
+  # ============================================================================
+  build-windows-complete:
+    name: Build Windows Binaries (CUDA + Vulkan)
+    runs-on: windows-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      
+      - name: Install dependencies
+        run: |
+          # Install CMake
+          choco install cmake --installargs 'ADD_CMAKE_TO_PATH=System' -y
+          
+          # Install Visual Studio Build Tools
+          choco install visualstudio2022buildtools -y
+          choco install visualstudio2022-workload-vctools -y
+      
+      - name: Setup CUDA
+        uses: Jimver/cuda-toolkit@v0.2.11
+        with:
+          cuda: '12.1'
+          method: 'chocolatey'
+      
+      - name: Setup Python environment for GPU
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118
+          python -m pip install -r gpu/requirements.txt
+      
+      - name: Build Standard CPU Binary
+        run: |
+          mkdir build-standard
+          cd build-standard
+          cmake .. -DLLAMA_BUILD_SERVER=ON -DLLAMA_BUILD_EXAMPLES=ON
+          cmake --build . --config Release
+      
+      - name: Build Standard GPU Binary (CUDA + Vulkan)
+        run: |
+          mkdir build-gpu
+          cd build-gpu
+          cmake .. -DGGML_CUDA=ON -DGGML_VULKAN=ON -DLLAMA_BUILD_SERVER=ON -DLLAMA_BUILD_EXAMPLES=ON
+          cmake --build . --config Release
+      
+      - name: Build BitNet CPU Binary
+        run: |
+          mkdir build-bitnet
+          cd build-bitnet
+          # Copy preset kernel header
+          copy preset_kernels\bitnet_b1_58-3B\bitnet-lut-kernels-tl2.h include\bitnet-lut-kernels.h
+          # Add missing includes (PowerShell)
+          (Get-Content include\bitnet-lut-kernels.h) | ForEach-Object { if ($_ -match '^#include') { $_ } else { $_ } } | Set-Content temp.txt
+          Add-Content temp.txt "#include <cstring>`n#include <immintrin.h>`n"
+          Get-Content include\bitnet-lut-kernels.h | Select-Object -Skip 1 | Add-Content temp.txt
+          Move-Item temp.txt include\bitnet-lut-kernels.h
+          cmake .. -DBITNET_ARM_TL1=ON -DLLAMA_BUILD_SERVER=ON -DLLAMA_BUILD_EXAMPLES=ON
+          cmake --build . --config Release
+      
+      - name: Build BitNet GPU kernels
+        run: |
+          cd gpu
+          python -m pip install -r requirements.txt
+          python setup.py build_ext --inplace
+      
+      - name: Verify and organize
+        run: |
+          mkdir -p Release\cpu\windows
+          mkdir -p Release\gpu\windows
+          
+          # Copy Standard CPU binaries
+          if (Test-Path "build-standard\bin\Release\llama-server.exe") {
+            copy build-standard\bin\Release\llama-server.exe Release\cpu\windows\llama-server-standard.exe
+            copy build-standard\bin\Release\llama-cli.exe Release\cpu\windows\llama-cli-standard.exe
+            copy build-standard\bin\Release\llama-bench.exe Release\cpu\windows\llama-bench-standard.exe
+            Write-Host "✅ Standard CPU binaries copied"
+          }
+          
+          # Copy Standard GPU binaries (CUDA + Vulkan)
+          if (Test-Path "build-gpu\bin\Release\llama-server.exe") {
+            copy build-gpu\bin\Release\llama-server.exe Release\cpu\windows\llama-server-gpu.exe
+            copy build-gpu\bin\Release\llama-cli.exe Release\cpu\windows\llama-cli-gpu.exe
+            copy build-gpu\bin\Release\llama-bench.exe Release\cpu\windows\llama-bench-gpu.exe
+            Write-Host "✅ Standard GPU binaries copied"
+          }
+          
+          # Copy BitNet CPU binaries
+          if (Test-Path "build-bitnet\bin\Release\llama-server.exe") {
+            copy build-bitnet\bin\Release\llama-server.exe Release\cpu\windows\llama-server-bitnet.exe
+            copy build-bitnet\bin\Release\llama-cli.exe Release\cpu\windows\llama-cli-bitnet.exe
+            copy build-bitnet\bin\Release\llama-bench.exe Release\cpu\windows\llama-bench-bitnet.exe
+            Write-Host "✅ BitNet CPU binaries copied"
+          }
+          
+          # Copy BitNet GPU modules
+          copy gpu\*.py Release\gpu\windows\
+          copy gpu\*.model Release\gpu\windows\
+          if (Test-Path "gpu\bitnet_kernels\bitlinear_cuda.pyd") {
+            copy gpu\bitnet_kernels\bitlinear_cuda.pyd Release\gpu\windows\
+            Write-Host "✅ BitNet GPU kernel copied"
+          }
+          
+          Write-Host "📁 Release Structure:"
+          Get-ChildItem -Recurse Release\ | Format-Table
+      
+      - name: Upload CPU artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: cpu-windows-complete
+          path: Release/cpu/windows/
+      
+      - name: Upload GPU artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: gpu-windows-complete
+          path: Release/gpu/windows/
+
+  # ============================================================================
+  # Create Release Placeholder (Optional)
+  # ============================================================================
+  create-release:
+    name: Create Release Placeholder
+    needs: [build-windows-complete]
+    runs-on: ubuntu-latest
+    if: github.event.inputs.create_release == 'true'
+    
+    steps:
+      - name: Download Windows artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts/
+      
+      - name: Organize Release structure
+        run: |
+          mkdir -p Release/cpu/windows
+          mkdir -p Release/gpu/windows
+          
+          # Copy Windows builds
+          cp artifacts/cpu-windows-complete/* Release/cpu/windows/ 2>/dev/null || true
+          cp -r artifacts/gpu-windows-complete/* Release/gpu/windows/ 2>/dev/null || true
+          
+          # Create README
+          cat > Release/README.md << 'EOF'
+          # BitNet Windows Release (Complete)
+          
+          This release contains Windows binaries with full GPU support.
+          
+          ## What's Included:
+          - ✅ Windows CPU binaries (Standard + BitNet)
+          - ✅ Windows GPU binaries (CUDA + Vulkan support)
+          - ✅ BitNet GPU kernels (CUDA)
+          
+          ## GPU Support:
+          - NVIDIA GPUs: CUDA acceleration
+          - AMD/Intel GPUs: Vulkan acceleration
+          - BitNet 1.58: Specialized CUDA kernels
+          
+          ## Directory Structure:
+          ```
+          Release/
+          ├── cpu/
+          │   └── windows/
+          │       ├── llama-server-standard.exe (CPU only)
+          │       ├── llama-server-gpu.exe (CUDA + Vulkan)
+          │       └── llama-server-bitnet.exe (ARM TL1)
+          └── gpu/
+              └── windows/
+                  ├── *.py (BitNet GPU modules)
+                  └── bitlinear_cuda.pyd (CUDA kernel)
+          ```
+          EOF
+          
+          echo "📁 Release Structure:"
+          ls -lhR Release/
+      
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: windows-complete-build-${{ github.run_number }}
+          name: Windows Binaries Complete (Build ${{ github.run_number }})
+          body: |
+            ## BitNet Windows Binaries (Complete)
+            
+            **Build:** ${{ github.run_number }}
+            **Commit:** ${{ github.sha }}
+            **Date:** ${{ github.event.head_commit.timestamp }}
+            
+            ### ✅ Included (Built by CI):
+            - Windows CPU binaries (Standard + BitNet)
+            - Windows GPU binaries (CUDA + Vulkan support)
+            - BitNet GPU kernels (CUDA)
+            
+            ### 🚀 GPU Support:
+            - **NVIDIA GPUs:** CUDA acceleration
+            - **AMD/Intel GPUs:** Vulkan acceleration  
+            - **BitNet 1.58:** Specialized CUDA kernels
+            
+            ### 🎯 Features:
+            - Full Vulkan support
+            - CUDA 12.1 support
+            - Both Standard and BitNet specialized binaries
+            - Complete CLI toolset (server, cli, bench)
+            
+            For TabAgent integration, this provides complete Windows support with both CUDA and Vulkan GPU acceleration.
+          draft: true
+          prerelease: false
+          files: |
+            Release/cpu/windows/llama-server-*.exe
+            Release/gpu/windows/*
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
