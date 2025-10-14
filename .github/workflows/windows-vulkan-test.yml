@@ -13,33 +13,9 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      # 1) Try Marketplace action (recommended)
-      - name: Install Vulkan SDK (Marketplace action)
-        id: action_install
-        uses: Duber/vulkan-sdk-action@v2
-        with:
-          sdk-version: '1.3.239.0' # change or remove to get latest
-        continue-on-error: true
-
-      - name: Verify after Marketplace action
-        id: verify_action
-        shell: powershell
-        run: |
-          $ok = $false
-          if (Get-Command vulkaninfo -ErrorAction SilentlyContinue) { $ok = $true }
-          elseif (Test-Path Env:VULKAN_SDK) { $ok = $true }
-          if ($ok) {
-            Write-Output 'Marketplace action succeeded'
-            echo "ok=true" >> $env:GITHUB_OUTPUT
-          } else {
-            Write-Output 'Marketplace action did not install Vulkan SDK'
-            echo "ok=false" >> $env:GITHUB_OUTPUT
-          }
-
-      # 2) Try winget if previous attempt didn't succeed
+      # 1) Try winget first (most reliable on Windows runners)
       - name: Install Vulkan SDK via winget
         id: winget_install
-        if: steps.verify_action.outputs.ok != 'true'
         shell: powershell
         continue-on-error: true
         run: |
@@ -48,7 +24,23 @@ jobs:
 
       - name: Verify after winget
         id: verify_winget
-        if: steps.verify_action.outputs.ok != 'true'
+        shell: powershell
+        run: |
+          $ok = $false
+          if (Get-Command vulkaninfo -ErrorAction SilentlyContinue) { $ok = $true }
+          elseif (Test-Path Env:VULKAN_SDK) { $ok = $true }
+          if ($ok) {
+            Write-Output 'winget install succeeded'
+            echo "ok=true" >> $env:GITHUB_OUTPUT
+          } else {
+            Write-Output 'winget did not install Vulkan SDK'
+            echo "ok=false" >> $env:GITHUB_OUTPUT
+          }
+
+      # 2) Try direct LunarG download if winget didn't succeed
+      - name: Install Vulkan SDK directly from LunarG
+        id: lunar_install
+        if: steps.verify_winget.outputs.ok != 'true'
         shell: powershell
         run: |
           $ok = $false
@@ -65,7 +57,7 @@ jobs:
       # 3) Try direct LunarG download if still not installed
       - name: Install Vulkan SDK directly from LunarG
         id: manual_install
-        if: steps.verify_action.outputs.ok != 'true' && (steps.verify_winget.outputs.ok != 'true' || steps.verify_winget.outputs.ok == '')
+        if: steps.verify_winget.outputs.ok != 'true'
         shell: powershell
         continue-on-error: true
         env:
@@ -89,7 +81,7 @@ jobs:
 
       - name: Verify after manual install
         id: verify_manual
-        if: steps.verify_action.outputs.ok != 'true' && (steps.verify_winget.outputs.ok != 'true' || steps.verify_winget.outputs.ok == '')
+        if: steps.verify_winget.outputs.ok != 'true'
         shell: powershell
         run: |
           $ok = $false
@@ -106,7 +98,7 @@ jobs:
       # 4) Optional: try Chocolatey as last attempt (warning: choco package often requires private CDN)
       - name: Install Vulkan SDK via Chocolatey (last resort)
         id: choco_install
-        if: steps.verify_action.outputs.ok != 'true' && steps.verify_winget.outputs.ok != 'true' && steps.verify_manual.outputs.ok != 'true'
+        if: steps.verify_winget.outputs.ok != 'true' && steps.verify_manual.outputs.ok != 'true'
         shell: powershell
         continue-on-error: true
         run: |
