@@ -48,24 +48,43 @@ jobs:
       
       - name: Build Standard CPU Binary
         run: |
+          Write-Host "🔨 Building Standard CPU Binary..."
           mkdir build-standard
           cd build-standard
-          cmake .. -DLLAMA_BUILD_SERVER=ON -DLLAMA_BUILD_EXAMPLES=ON
-          cmake --build . --config Release
+          if (cmake .. -DLLAMA_BUILD_SERVER=ON -DLLAMA_BUILD_EXAMPLES=ON && cmake --build . --config Release) {
+            Write-Host "✅ Standard CPU build SUCCESS"
+            echo "STANDARD_CPU_SUCCESS=true" >> $env:GITHUB_ENV
+          } else {
+            Write-Host "❌ Standard CPU build FAILED"
+            echo "STANDARD_CPU_SUCCESS=false" >> $env:GITHUB_ENV
+          }
       
       - name: Build Standard GPU Binary (CUDA + Vulkan)
         run: |
+          Write-Host "🔨 Building Standard GPU Binary (CUDA + Vulkan)..."
           mkdir build-gpu
           cd build-gpu
           # Try CUDA + Vulkan first, fallback to CUDA-only if Vulkan fails
-          cmake .. -DGGML_CUDA=ON -DGGML_VULKAN=ON -DLLAMA_BUILD_SERVER=ON -DLLAMA_BUILD_EXAMPLES=ON || (
-            echo "Vulkan build failed, trying CUDA-only..."
-            cmake .. -DGGML_CUDA=ON -DGGML_VULKAN=OFF -DLLAMA_BUILD_SERVER=ON -DLLAMA_BUILD_EXAMPLES=ON
-          )
-          cmake --build . --config Release
+          if (cmake .. -DGGML_CUDA=ON -DGGML_VULKAN=ON -DLLAMA_BUILD_SERVER=ON -DLLAMA_BUILD_EXAMPLES=ON && cmake --build . --config Release) {
+            Write-Host "✅ Standard GPU build SUCCESS (CUDA + Vulkan)"
+            echo "STANDARD_GPU_SUCCESS=true" >> $env:GITHUB_ENV
+            echo "GPU_VULKAN_SUCCESS=true" >> $env:GITHUB_ENV
+          } else {
+            Write-Host "⚠️ Vulkan build failed, trying CUDA-only..."
+            if (cmake .. -DGGML_CUDA=ON -DGGML_VULKAN=OFF -DLLAMA_BUILD_SERVER=ON -DLLAMA_BUILD_EXAMPLES=ON && cmake --build . --config Release) {
+              Write-Host "✅ Standard GPU build SUCCESS (CUDA-only)"
+              echo "STANDARD_GPU_SUCCESS=true" >> $env:GITHUB_ENV
+              echo "GPU_VULKAN_SUCCESS=false" >> $env:GITHUB_ENV
+            } else {
+              Write-Host "❌ Standard GPU build FAILED"
+              echo "STANDARD_GPU_SUCCESS=false" >> $env:GITHUB_ENV
+              echo "GPU_VULKAN_SUCCESS=false" >> $env:GITHUB_ENV
+            }
+          }
       
       - name: Build BitNet CPU Binary
         run: |
+          Write-Host "🔨 Building BitNet CPU Binary..."
           mkdir build-bitnet
           cd build-bitnet
           # Copy preset kernel header (same fix as Linux)
@@ -78,56 +97,92 @@ jobs:
           $newContent += "#include <immintrin.h>"
           $newContent += $content[1..($content.Length-1)]  # Rest of content
           $newContent | Set-Content include\bitnet-lut-kernels.h
-          cmake .. -DBITNET_ARM_TL1=ON -DLLAMA_BUILD_SERVER=ON -DLLAMA_BUILD_EXAMPLES=ON
-          cmake --build . --config Release
+          if (cmake .. -DBITNET_ARM_TL1=ON -DLLAMA_BUILD_SERVER=ON -DLLAMA_BUILD_EXAMPLES=ON && cmake --build . --config Release) {
+            Write-Host "✅ BitNet CPU build SUCCESS"
+            echo "BITNET_CPU_SUCCESS=true" >> $env:GITHUB_ENV
+          } else {
+            Write-Host "❌ BitNet CPU build FAILED"
+            echo "BITNET_CPU_SUCCESS=false" >> $env:GITHUB_ENV
+          }
       
       - name: Build BitNet GPU kernels
         run: |
+          Write-Host "🔨 Building BitNet GPU kernels..."
           cd gpu
           # Install PyTorch CUDA first (same as Linux fix)
           python -m pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118
           # Then install other requirements (may skip conflicting torch versions)
           python -m pip install -r requirements.txt --no-deps || echo "Some requirements skipped due to conflicts"
-          python setup.py build_ext --inplace
+          if (python setup.py build_ext --inplace) {
+            Write-Host "✅ BitNet GPU kernels build SUCCESS"
+            echo "BITNET_GPU_SUCCESS=true" >> $env:GITHUB_ENV
+          } else {
+            Write-Host "❌ BitNet GPU kernels build FAILED"
+            echo "BITNET_GPU_SUCCESS=false" >> $env:GITHUB_ENV
+          }
       
       - name: Verify and organize
         run: |
+          Write-Host "📁 Organizing build artifacts..."
           mkdir -p Release\cpu\windows
           mkdir -p Release\gpu\windows
           
-          # Copy Standard CPU binaries
-          if (Test-Path "build-standard\bin\Release\llama-server.exe") {
+          # Copy Standard CPU binaries - only if build succeeded
+          if ($env:STANDARD_CPU_SUCCESS -eq "true" -and (Test-Path "build-standard\bin\Release\llama-server.exe")) {
             copy build-standard\bin\Release\llama-server.exe Release\cpu\windows\llama-server-standard.exe
             copy build-standard\bin\Release\llama-cli.exe Release\cpu\windows\llama-cli-standard.exe
             copy build-standard\bin\Release\llama-bench.exe Release\cpu\windows\llama-bench-standard.exe
             Write-Host "✅ Standard CPU binaries copied"
+          } else {
+            Write-Host "⚠️ Standard CPU build failed or binaries not found - skipping"
           }
           
-          # Copy Standard GPU binaries (CUDA + Vulkan)
-          if (Test-Path "build-gpu\bin\Release\llama-server.exe") {
-            copy build-gpu\bin\Release\llama-server.exe Release\cpu\windows\llama-server-gpu.exe
-            copy build-gpu\bin\Release\llama-cli.exe Release\cpu\windows\llama-cli-gpu.exe
-            copy build-gpu\bin\Release\llama-bench.exe Release\cpu\windows\llama-bench-gpu.exe
-            Write-Host "✅ Standard GPU binaries copied"
+          # Copy Standard GPU binaries - only if build succeeded
+          if ($env:STANDARD_GPU_SUCCESS -eq "true" -and (Test-Path "build-gpu\bin\Release\llama-server.exe")) {
+            $gpuSuffix = if ($env:GPU_VULKAN_SUCCESS -eq "true") { "gpu" } else { "cuda" }
+            copy build-gpu\bin\Release\llama-server.exe Release\cpu\windows\llama-server-$gpuSuffix.exe
+            copy build-gpu\bin\Release\llama-cli.exe Release\cpu\windows\llama-cli-$gpuSuffix.exe
+            copy build-gpu\bin\Release\llama-bench.exe Release\cpu\windows\llama-bench-$gpuSuffix.exe
+            Write-Host "✅ Standard GPU binaries copied ($gpuSuffix)"
+          } else {
+            Write-Host "⚠️ Standard GPU build failed or binaries not found - skipping"
           }
           
-          # Copy BitNet CPU binaries
-          if (Test-Path "build-bitnet\bin\Release\llama-server.exe") {
+          # Copy BitNet CPU binaries - only if build succeeded
+          if ($env:BITNET_CPU_SUCCESS -eq "true" -and (Test-Path "build-bitnet\bin\Release\llama-server.exe")) {
             copy build-bitnet\bin\Release\llama-server.exe Release\cpu\windows\llama-server-bitnet.exe
             copy build-bitnet\bin\Release\llama-cli.exe Release\cpu\windows\llama-cli-bitnet.exe
             copy build-bitnet\bin\Release\llama-bench.exe Release\cpu\windows\llama-bench-bitnet.exe
             Write-Host "✅ BitNet CPU binaries copied"
+          } else {
+            Write-Host "⚠️ BitNet CPU build failed or binaries not found - skipping"
           }
           
-          # Copy BitNet GPU modules
-          copy gpu\*.py Release\gpu\windows\
-          copy gpu\*.model Release\gpu\windows\
-          if (Test-Path "gpu\bitnet_kernels\bitlinear_cuda.pyd") {
+          # Copy BitNet GPU modules - always try to copy Python files
+          if (Test-Path "gpu\*.py") {
+            copy gpu\*.py Release\gpu\windows\
+            copy gpu\*.model Release\gpu\windows\
+            Write-Host "✅ BitNet GPU Python modules copied"
+          }
+          
+          # Copy BitNet GPU kernel - only if build succeeded
+          if ($env:BITNET_GPU_SUCCESS -eq "true" -and (Test-Path "gpu\bitnet_kernels\bitlinear_cuda.pyd")) {
             copy gpu\bitnet_kernels\bitlinear_cuda.pyd Release\gpu\windows\
             Write-Host "✅ BitNet GPU kernel copied"
+          } else {
+            Write-Host "⚠️ BitNet GPU kernel build failed or not found - skipping"
           }
           
-          Write-Host "📁 Release Structure:"
+          # Create build summary
+          Write-Host ""
+          Write-Host "📋 BUILD SUMMARY:"
+          Write-Host "Standard CPU Build: $(if ($env:STANDARD_CPU_SUCCESS -eq "true") { "✅ SUCCESS" } else { "❌ FAILED" })"
+          Write-Host "Standard GPU Build: $(if ($env:STANDARD_GPU_SUCCESS -eq "true") { "✅ SUCCESS" } else { "❌ FAILED" })"
+          Write-Host "Vulkan Support: $(if ($env:GPU_VULKAN_SUCCESS -eq "true") { "✅ ENABLED" } else { "❌ DISABLED" })"
+          Write-Host "BitNet CPU Build: $(if ($env:BITNET_CPU_SUCCESS -eq "true") { "✅ SUCCESS" } else { "❌ FAILED" })"
+          Write-Host "BitNet GPU Build: $(if ($env:BITNET_GPU_SUCCESS -eq "true") { "✅ SUCCESS" } else { "❌ FAILED" })"
+          Write-Host ""
+          Write-Host "📁 Final Release Structure:"
           Get-ChildItem -Recurse Release\ | Format-Table
       
       - name: Upload CPU artifact
