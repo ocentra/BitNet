@@ -1,0 +1,227 @@
+name: Build Linux Binaries with Vulkan Support
+
+on:
+  workflow_dispatch:
+    inputs:
+      create_release:
+        description: 'Create GitHub Release after build'
+        required: false
+        default: 'false'
+
+jobs:
+  # ============================================================================
+  # Build CPU + GPU Binaries for Linux (Ubuntu 22.04 with Vulkan)
+  # ============================================================================
+  build-linux-vulkan:
+    name: Build Linux Binaries (Ubuntu 22.04 + CUDA + Vulkan)
+    runs-on: ubuntu-22.04
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential cmake python3-dev python3-pip
+          sudo apt-get install -y libvulkan-dev vulkan-tools glslang-tools
+          sudo ln -s /usr/bin/glslangValidator /usr/bin/glslc
+      
+      - name: Install CUDA Toolkit
+        run: |
+          wget https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2204/x86_64/cuda-keyring_1.1-1_all.deb
+          sudo dpkg -i cuda-keyring_1.1-1_all.deb
+          sudo apt-get update
+          sudo apt-get install -y cuda-toolkit-12-1
+          echo "CUDA_HOME=/usr/local/cuda-12.1" >> $GITHUB_ENV
+          echo "/usr/local/cuda-12.1/bin" >> $GITHUB_PATH
+          echo "/usr/local/cuda-12.1/lib64" >> $GITHUB_PATH
+          export LD_LIBRARY_PATH="/usr/local/cuda-12.1/lib64:$LD_LIBRARY_PATH"
+          echo "LD_LIBRARY_PATH=/usr/local/cuda-12.1/lib64:$LD_LIBRARY_PATH" >> $GITHUB_ENV
+      
+      - name: Setup Python environment for GPU
+        run: |
+          python3 -m pip install --upgrade pip
+          python3 -m pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118
+          python3 -m pip install -r gpu/requirements.txt
+      
+      - name: Build Standard CPU Binary
+        run: |
+          mkdir build-standard && cd build-standard
+          cmake .. -DLLAMA_BUILD_SERVER=ON -DLLAMA_BUILD_EXAMPLES=ON
+          cmake --build . --config Release
+      
+      - name: Build Standard GPU Binary (CUDA + Vulkan)
+        run: |
+          mkdir build-gpu && cd build-gpu
+          cmake .. -DGGML_CUDA=ON -DGGML_VULKAN=ON -DLLAMA_BUILD_SERVER=ON -DLLAMA_BUILD_EXAMPLES=ON
+          cmake --build . --config Release
+      
+      - name: Build BitNet CPU Binary
+        run: |
+          mkdir build-bitnet && cd build-bitnet
+          # Copy preset kernel header
+          cp preset_kernels/bitnet_b1_58-3B/bitnet-lut-kernels-tl2.h include/bitnet-lut-kernels.h
+          # Add missing includes
+          sed -i '2i#include <cstring>' include/bitnet-lut-kernels.h
+          sed -i '3i#include <immintrin.h>' include/bitnet-lut-kernels.h
+          cmake .. -DBITNET_ARM_TL1=ON -DLLAMA_BUILD_SERVER=ON -DLLAMA_BUILD_EXAMPLES=ON
+          cmake --build . --config Release
+      
+      - name: Build BitNet GPU kernels
+        run: |
+          cd gpu
+          python3 -m pip install -r requirements.txt
+          python3 setup.py build_ext --inplace
+      
+      - name: Verify and organize
+        run: |
+          mkdir -p Release/cpu/linux
+          mkdir -p Release/gpu/linux
+          
+          # Copy Standard CPU binaries
+          if [ -f "build-standard/bin/llama-server" ]; then
+            cp build-standard/bin/llama-server Release/cpu/linux/llama-server-standard
+            cp build-standard/bin/llama-cli Release/cpu/linux/llama-cli-standard
+            cp build-standard/bin/llama-bench Release/cpu/linux/llama-bench-standard
+            chmod +x Release/cpu/linux/llama-*-standard
+            echo "✅ Standard CPU binaries copied"
+          fi
+          
+          # Copy Standard GPU binaries (CUDA + Vulkan)
+          if [ -f "build-gpu/bin/llama-server" ]; then
+            cp build-gpu/bin/llama-server Release/cpu/linux/llama-server-gpu
+            cp build-gpu/bin/llama-cli Release/cpu/linux/llama-cli-gpu
+            cp build-gpu/bin/llama-bench Release/cpu/linux/llama-bench-gpu
+            chmod +x Release/cpu/linux/llama-*-gpu
+            echo "✅ Standard GPU binaries copied"
+          fi
+          
+          # Copy BitNet CPU binaries
+          if [ -f "build-bitnet/bin/llama-server" ]; then
+            cp build-bitnet/bin/llama-server Release/cpu/linux/llama-server-bitnet
+            cp build-bitnet/bin/llama-cli Release/cpu/linux/llama-cli-bitnet
+            cp build-bitnet/bin/llama-bench Release/cpu/linux/llama-bench-bitnet
+            chmod +x Release/cpu/linux/llama-*-bitnet
+            echo "✅ BitNet CPU binaries copied"
+          fi
+          
+          # Copy BitNet GPU modules
+          cp gpu/*.py Release/gpu/linux/
+          cp gpu/*.model Release/gpu/linux/
+          if [ -f "gpu/bitnet_kernels/bitlinear_cuda.so" ]; then
+            cp gpu/bitnet_kernels/bitlinear_cuda.so Release/gpu/linux/
+            echo "✅ BitNet GPU kernel copied"
+          fi
+          
+          echo "📁 Release Structure:"
+          ls -lhR Release/
+      
+      - name: Upload CPU artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: cpu-linux-vulkan
+          path: Release/cpu/linux/
+      
+      - name: Upload GPU artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: gpu-linux-vulkan
+          path: Release/gpu/linux/
+
+  # ============================================================================
+  # Create Release Placeholder (Optional)
+  # ============================================================================
+  create-release:
+    name: Create Release Placeholder
+    needs: [build-linux-vulkan]
+    runs-on: ubuntu-latest
+    if: github.event.inputs.create_release == 'true'
+    
+    steps:
+      - name: Download Linux artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts/
+      
+      - name: Organize Release structure
+        run: |
+          mkdir -p Release/cpu/linux
+          mkdir -p Release/gpu/linux
+          
+          # Copy Linux builds
+          cp artifacts/cpu-linux-vulkan/* Release/cpu/linux/ 2>/dev/null || true
+          cp -r artifacts/gpu-linux-vulkan/* Release/gpu/linux/ 2>/dev/null || true
+          
+          # Create README
+          cat > Release/README.md << 'EOF'
+          # BitNet Linux Release (Ubuntu 22.04 + Vulkan)
+          
+          This release contains Linux binaries with full GPU support.
+          
+          ## What's Included:
+          - ✅ Linux CPU binaries (Standard + BitNet)
+          - ✅ Linux GPU binaries (CUDA + Vulkan support)
+          - ✅ BitNet GPU kernels (CUDA)
+          
+          ## GPU Support:
+          - NVIDIA GPUs: CUDA acceleration
+          - AMD/Intel GPUs: Vulkan acceleration
+          - BitNet 1.58: Specialized CUDA kernels
+          
+          ## Directory Structure:
+          ```
+          Release/
+          ├── cpu/
+          │   └── linux/
+          │       ├── llama-server-standard (CPU only)
+          │       ├── llama-server-gpu (CUDA + Vulkan)
+          │       └── llama-server-bitnet (ARM TL1)
+          └── gpu/
+              └── linux/
+                  ├── *.py (BitNet GPU modules)
+                  └── bitlinear_cuda.so (CUDA kernel)
+          ```
+          EOF
+          
+          echo "📁 Release Structure:"
+          ls -lhR Release/
+      
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: linux-vulkan-build-${{ github.run_number }}
+          name: Linux Binaries with Vulkan (Build ${{ github.run_number }})
+          body: |
+            ## BitNet Linux Binaries (Ubuntu 22.04 + Vulkan)
+            
+            **Build:** ${{ github.run_number }}
+            **Commit:** ${{ github.sha }}
+            **Date:** ${{ github.event.head_commit.timestamp }}
+            
+            ### ✅ Included (Built by CI):
+            - Linux CPU binaries (Standard + BitNet)
+            - Linux GPU binaries (CUDA + Vulkan support)
+            - BitNet GPU kernels (CUDA)
+            
+            ### 🚀 GPU Support:
+            - **NVIDIA GPUs:** CUDA acceleration
+            - **AMD/Intel GPUs:** Vulkan acceleration  
+            - **BitNet 1.58:** Specialized CUDA kernels
+            
+            ### 🎯 Features:
+            - Full Vulkan 1.3 support (Ubuntu 22.04)
+            - CUDA 12.1 support
+            - Both Standard and BitNet specialized binaries
+            - Complete CLI toolset (server, cli, bench)
+            
+            For TabAgent integration, this provides complete Linux support with both CUDA and Vulkan GPU acceleration.
+          draft: true
+          prerelease: false
+          files: |
+            Release/cpu/linux/llama-server-*
+            Release/gpu/linux/*
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

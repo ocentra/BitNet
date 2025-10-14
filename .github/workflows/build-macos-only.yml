@@ -25,23 +25,64 @@ jobs:
       - name: Install dependencies
         run: brew install cmake
       
-      - name: Build CPU Binary
+      - name: Build Standard CPU Binary (Metal)
         run: |
-          mkdir build && cd build
-          cmake .. -DBITNET_ARM_TL1=ON -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++
+          mkdir build-standard && cd build-standard
+          cmake .. -DGGML_METAL=ON -DLLAMA_BUILD_SERVER=ON -DLLAMA_BUILD_EXAMPLES=ON -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++
+          cmake --build . --config Release
+      
+      - name: Build BitNet CPU Binary (ARM TL1)
+        run: |
+          mkdir build-bitnet && cd build-bitnet
+          cmake .. -DBITNET_ARM_TL1=ON -DLLAMA_BUILD_SERVER=ON -DLLAMA_BUILD_EXAMPLES=ON -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++
           cmake --build . --config Release
       
       - name: Verify and organize
         run: |
           mkdir -p Release/cpu/macos
           
-          if [ -f "build/bin/llama-server" ]; then
-            cp build/bin/llama-server Release/cpu/macos/
-            chmod +x Release/cpu/macos/llama-server
-            echo "✅ CPU binary: $(ls -lh build/bin/llama-server | awk '{print $5}')"
+          # Copy Standard binaries (Metal)
+          if [ -f "build-standard/bin/llama-server" ]; then
+            cp build-standard/bin/llama-server Release/cpu/macos/llama-server-standard
+            chmod +x Release/cpu/macos/llama-server-standard
+            echo "✅ Standard CPU binary: $(ls -lh build-standard/bin/llama-server | awk '{print $5}')"
           else
-            echo "❌ CPU binary not found!"
+            echo "❌ Standard CPU binary not found!"
             exit 1
+          fi
+          
+          if [ -f "build-standard/bin/llama-cli" ]; then
+            cp build-standard/bin/llama-cli Release/cpu/macos/llama-cli-standard
+            chmod +x Release/cpu/macos/llama-cli-standard
+            echo "✅ Standard CLI binary: $(ls -lh build-standard/bin/llama-cli | awk '{print $5}')"
+          fi
+          
+          if [ -f "build-standard/bin/llama-bench" ]; then
+            cp build-standard/bin/llama-bench Release/cpu/macos/llama-bench-standard
+            chmod +x Release/cpu/macos/llama-bench-standard
+            echo "✅ Standard bench binary: $(ls -lh build-standard/bin/llama-bench | awk '{print $5}')"
+          fi
+          
+          # Copy BitNet binaries (ARM TL1)
+          if [ -f "build-bitnet/bin/llama-server" ]; then
+            cp build-bitnet/bin/llama-server Release/cpu/macos/llama-server-bitnet
+            chmod +x Release/cpu/macos/llama-server-bitnet
+            echo "✅ BitNet CPU binary: $(ls -lh build-bitnet/bin/llama-server | awk '{print $5}')"
+          else
+            echo "❌ BitNet CPU binary not found!"
+            exit 1
+          fi
+          
+          if [ -f "build-bitnet/bin/llama-cli" ]; then
+            cp build-bitnet/bin/llama-cli Release/cpu/macos/llama-cli-bitnet
+            chmod +x Release/cpu/macos/llama-cli-bitnet
+            echo "✅ BitNet CLI binary: $(ls -lh build-bitnet/bin/llama-cli | awk '{print $5}')"
+          fi
+          
+          if [ -f "build-bitnet/bin/llama-bench" ]; then
+            cp build-bitnet/bin/llama-bench Release/cpu/macos/llama-bench-bitnet
+            chmod +x Release/cpu/macos/llama-bench-bitnet
+            echo "✅ BitNet bench binary: $(ls -lh build-bitnet/bin/llama-bench | awk '{print $5}')"
           fi
       
       - name: Upload CPU artifact
