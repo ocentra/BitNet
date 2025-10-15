@@ -12,6 +12,7 @@ name: Build Linux Binaries with Vulkan Support
 # 9. ✅ Fixed all build steps to cd into correct directories (3rdparty/llama.cpp/)
 # 10. ✅ Fixed GPU kernel build to return to repo root before cd gpu/
 # 11. ✅ Workflow now FAILS on any build error (was showing false green checkmarks)
+# 12. ✅ Explicit submodule initialization (forked repos don't auto-init submodules)
 #
 # NOTE: This workflow only builds Linux GPU binaries with Vulkan + CUDA.
 # CPU binaries already built successfully via WSL and stored in Release/ folder.
@@ -38,6 +39,23 @@ jobs:
         uses: actions/checkout@v4
         with:
           submodules: recursive
+      
+      - name: Initialize submodules explicitly
+        run: |
+          echo "📦 Verifying submodules..."
+          git submodule status
+          git submodule update --init --recursive --force
+          
+          # Verify llama.cpp is actually there
+          if [ ! -f "3rdparty/llama.cpp/CMakeLists.txt" ]; then
+            echo "❌ FATAL: llama.cpp submodule not initialized!"
+            echo "Submodule status:"
+            git submodule status
+            ls -la 3rdparty/
+            ls -la 3rdparty/llama.cpp/ || echo "llama.cpp directory doesn't exist!"
+            exit 1
+          fi
+          echo "✅ llama.cpp submodule verified"
       
       - name: Set up Python 3.11
         uses: actions/setup-python@v5
