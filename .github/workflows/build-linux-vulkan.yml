@@ -64,10 +64,21 @@ jobs:
       
       - name: Clean workspace to save space
         run: |
-          # Only delete large unnecessary directories (saves ~50-100MB, low risk)
-          rm -rf docs/ media/ assets/
+          # Aggressive cleanup to save maximum disk space (keep preset_kernels for BitNet!)
+          rm -rf docs/ media/ assets/ utils/
           rm -rf 3rdparty/llama.cpp/docs 3rdparty/llama.cpp/media 3rdparty/llama.cpp/assets
-          echo "Basic cleanup completed, checking space:"
+          find . -name "*.md" -not -path "./.github/*" -delete
+          find . -name "*.txt" -not -name "CMakeLists.txt" -not -path "./requirements.txt" -not -path "./gpu/requirements.txt" -delete
+          find . -name "*.py" -not -path "*/gpu/*" -not -path "./setup_env.py" -delete
+          find . -name "*.sh" -not -path "./.github/*" -delete
+          find . -name "*.bat" -not -path "./.github/*" -delete
+          find . -name "*.deb" -delete
+          find . -name "*.pdf" -delete
+          find . -name "*.png" -delete
+          find . -name "*.jpg" -delete
+          find . -name "*.jpeg" -delete
+          # Keep only essential source files and build scripts
+          echo "Aggressive cleanup completed, checking space:"
           df -h
       
       - name: Install dependencies and Vulkan SDK
