@@ -38,8 +38,8 @@ jobs:
       
       - name: Clean workspace to save space
         run: |
-          # Aggressive cleanup to save maximum disk space
-          rm -rf docs/ media/ assets/ preset_kernels/ utils/
+          # Aggressive cleanup to save maximum disk space (keep preset_kernels for BitNet!)
+          rm -rf docs/ media/ assets/ utils/
           rm -rf 3rdparty/llama.cpp/docs 3rdparty/llama.cpp/media 3rdparty/llama.cpp/assets
           find . -name "*.md" -not -path "./.github/*" -delete
           find . -name "*.txt" -not -path "./requirements.txt" -not -path "./gpu/requirements.txt" -delete
