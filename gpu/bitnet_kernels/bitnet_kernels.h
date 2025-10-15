@@ -7,6 +7,10 @@
 #include <cuda_fp16.h>
 #include <cuda_bf16.h>
 
+// Windows CUDA: uint is not defined by default
+#ifndef __linux__
+typedef unsigned int uint;
+#endif
 
 #if (((__CUDACC_VER_MAJOR__ == 11) && (__CUDACC_VER_MINOR__ >= 4)) || (__CUDACC_VER_MAJOR__ > 11))
 #define TVM_ENABLE_L2_PREFETCH 1

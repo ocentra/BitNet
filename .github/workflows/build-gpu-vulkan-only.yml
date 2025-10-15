@@ -1,0 +1,211 @@
+name: Build GPU with Vulkan Only (What WSL Couldn't Do)
+
+# This workflow ONLY builds what couldn't be done in WSL:
+# - Standard GPU Binary with CUDA + Vulkan support
+# 
+# Everything else (CPU, BitNet, Python GPU) is already built locally in WSL
+# and committed to Release/ folder.
+
+on:
+  workflow_dispatch:
+    inputs:
+      upload_to_release:
+        description: 'Upload artifacts to Release folder (commit & push)'
+        required: false
+        default: 'false'
+
+jobs:
+  build-gpu-vulkan:
+    name: Build GPU Binary with Vulkan (Ubuntu 22.04)
+    runs-on: ubuntu-22.04
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      
+      - name: Initialize submodules
+        run: |
+          echo "📦 Verifying llama.cpp submodule..."
+          git submodule update --init --recursive --force
+          
+          if [ ! -f "3rdparty/llama.cpp/CMakeLists.txt" ]; then
+            echo "❌ FATAL: llama.cpp submodule missing!"
+            exit 1
+          fi
+          echo "✅ llama.cpp verified"
+      
+      - name: Install build tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential cmake
+      
+      - name: Install Vulkan SDK from LunarG
+        run: |
+          echo "📦 Installing Vulkan SDK..."
+          wget -qO- https://packages.lunarg.com/lunarg-signing-key-pub.asc | sudo tee /etc/apt/trusted.gpg.d/lunarg.asc
+          sudo wget -qO /etc/apt/sources.list.d/lunarg-vulkan-jammy.list http://packages.lunarg.com/vulkan/lunarg-vulkan-jammy.list
+          sudo apt-get update
+          sudo apt-get install -y vulkan-sdk vulkan-tools
+          
+          # Verify glslc shader compiler
+          which glslc && glslc --version || (echo "❌ glslc not found!" && exit 1)
+          echo "✅ Vulkan SDK installed"
+      
+      - name: Install CUDA Toolkit (Minimal)
+        run: |
+          echo "📦 Installing CUDA 12.1..."
+          wget https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2204/x86_64/cuda-keyring_1.1-1_all.deb
+          sudo dpkg -i cuda-keyring_1.1-1_all.deb
+          sudo apt-get update
+          
+          # Minimal CUDA packages only
+          sudo apt-get install -y \
+            cuda-cudart-12-1 \
+            cuda-nvcc-12-1 \
+            cuda-nvtx-12-1 \
+            libcublas-12-1 \
+            libcublas-dev-12-1 \
+            libcudnn9-cuda-12
+          
+          # Set environment
+          echo "CUDA_HOME=/usr/local/cuda-12.1" >> $GITHUB_ENV
+          echo "/usr/local/cuda-12.1/bin" >> $GITHUB_PATH
+          echo "LD_LIBRARY_PATH=/usr/local/cuda-12.1/lib64:$LD_LIBRARY_PATH" >> $GITHUB_ENV
+          
+          # Clean up
+          sudo apt-get clean
+          rm -f cuda-keyring_*.deb
+          echo "✅ CUDA installed"
+      
+      - name: Build GPU Binary with CUDA + Vulkan
+        run: |
+          echo "🔨 Building GPU Binary (CUDA + Vulkan)..."
+          cd 3rdparty/llama.cpp
+          mkdir build-gpu-vulkan && cd build-gpu-vulkan
+          
+          # Try CUDA + Vulkan first
+          if cmake .. -DGGML_CUDA=ON -DGGML_VULKAN=ON -DLLAMA_BUILD_SERVER=ON -DLLAMA_BUILD_EXAMPLES=ON && \
+             cmake --build . --config Release; then
+            echo "✅ GPU build SUCCESS (CUDA + Vulkan)"
+            echo "BUILD_SUCCESS=true" >> $GITHUB_ENV
+            echo "VULKAN_ENABLED=true" >> $GITHUB_ENV
+          else
+            echo "⚠️ Vulkan build failed, trying CUDA-only..."
+            rm -rf *
+            if cmake .. -DGGML_CUDA=ON -DGGML_VULKAN=OFF -DLLAMA_BUILD_SERVER=ON -DLLAMA_BUILD_EXAMPLES=ON && \
+               cmake --build . --config Release; then
+              echo "✅ GPU build SUCCESS (CUDA-only)"
+              echo "BUILD_SUCCESS=true" >> $GITHUB_ENV
+              echo "VULKAN_ENABLED=false" >> $GITHUB_ENV
+            else
+              echo "❌ GPU build FAILED"
+              echo "BUILD_SUCCESS=false" >> $GITHUB_ENV
+              exit 1
+            fi
+          fi
+      
+      - name: Organize artifacts
+        if: env.BUILD_SUCCESS == 'true'
+        run: |
+          echo "📁 Organizing GPU binaries..."
+          mkdir -p artifacts/gpu-vulkan
+          
+          cd 3rdparty/llama.cpp/build-gpu-vulkan/bin
+          
+          # Determine suffix based on Vulkan support
+          if [ "$VULKAN_ENABLED" = "true" ]; then
+            SUFFIX="gpu-vulkan"
+          else
+            SUFFIX="gpu-cuda"
+          fi
+          
+          # Copy binaries with descriptive names
+          cp llama-server ../../../../../artifacts/gpu-vulkan/llama-server-${SUFFIX}
+          cp llama-cli ../../../../../artifacts/gpu-vulkan/llama-cli-${SUFFIX}
+          cp llama-bench ../../../../../artifacts/gpu-vulkan/llama-bench-${SUFFIX}
+          
+          cd ../../../../../artifacts/gpu-vulkan
+          chmod +x llama-*
+          
+          # Create build info
+          cat > BUILD_INFO.txt << EOF
+          Build Type: GPU with $([ "$VULKAN_ENABLED" = "true" ] && echo "CUDA + Vulkan" || echo "CUDA only")
+          Build Date: $(date -u +"%Y-%m-%d %H:%M:%S UTC")
+          Commit: ${{ github.sha }}
+          
+          Features:
+          - CUDA 12.1: YES
+          - Vulkan: $([ "$VULKAN_ENABLED" = "true" ] && echo "YES" || echo "NO")
+          
+          Binaries:
+          - llama-server-${SUFFIX}
+          - llama-cli-${SUFFIX}
+          - llama-bench-${SUFFIX}
+          
+          GPU Support:
+          $([ "$VULKAN_ENABLED" = "true" ] && echo "- NVIDIA GPUs (CUDA)
+          - AMD GPUs (Vulkan)
+          - Intel GPUs (Vulkan)" || echo "- NVIDIA GPUs only (CUDA)")
+          EOF
+          
+          echo "📋 Build Info:"
+          cat BUILD_INFO.txt
+          
+          echo ""
+          echo "📦 Artifact contents:"
+          ls -lh
+      
+      - name: Upload GPU artifact
+        if: env.BUILD_SUCCESS == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: gpu-linux-vulkan-only
+          path: artifacts/gpu-vulkan/
+      
+      - name: Commit to Release folder (Optional)
+        if: env.BUILD_SUCCESS == 'true' && github.event.inputs.upload_to_release == 'true'
+        run: |
+          echo "📤 Uploading to Release/gpu/linux..."
+          
+          # Configure git
+          git config user.name "GitHub Actions"
+          git config user.email "actions@github.com"
+          
+          # Create Release directory if needed
+          mkdir -p Release/gpu/linux
+          
+          # Copy binaries
+          cp artifacts/gpu-vulkan/llama-* Release/gpu/linux/
+          cp artifacts/gpu-vulkan/BUILD_INFO.txt Release/gpu/linux/GPU_BUILD_INFO.txt
+          
+          # Commit and push
+          git add Release/gpu/linux/
+          git commit -m "CI: Add GPU binaries with $([ "$VULKAN_ENABLED" = "true" ] && echo "Vulkan" || echo "CUDA-only") support [skip ci]" || echo "No changes to commit"
+          git push || echo "Push failed - may need manual intervention"
+      
+      - name: Build Summary
+        if: always()
+        run: |
+          echo ""
+          echo "═══════════════════════════════════════════════════"
+          echo "           GPU BUILD SUMMARY"
+          echo "═══════════════════════════════════════════════════"
+          echo ""
+          if [ "$BUILD_SUCCESS" = "true" ]; then
+            echo "✅ GPU Build: SUCCESS"
+            echo "✅ CUDA Support: ENABLED"
+            if [ "$VULKAN_ENABLED" = "true" ]; then
+              echo "✅ Vulkan Support: ENABLED (AMD/Intel/NVIDIA)"
+            else
+              echo "⚠️  Vulkan Support: DISABLED (NVIDIA only)"
+            fi
+          else
+            echo "❌ GPU Build: FAILED"
+          fi
+          echo ""
+          echo "This workflow ONLY builds GPU with Vulkan."
+          echo "All other builds (CPU, BitNet) are from local WSL."
+          echo "═══════════════════════════════════════════════════"
+

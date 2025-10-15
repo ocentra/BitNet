@@ -4,6 +4,16 @@ include(CheckIncludeFileCXX)
 
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
+# Windows-specific: Auto-disable Vulkan if VULKAN_SDK not set (graceful fallback)
+if (WIN32 AND GGML_VULKAN)
+    if (NOT DEFINED ENV{VULKAN_SDK})
+        message(STATUS "Windows: VULKAN_SDK environment variable not set")
+        message(STATUS "Vulkan support disabled - falling back to CUDA-only")
+        message(STATUS "To enable Vulkan, set VULKAN_SDK and run: setup_vulkan.ps1")
+        set(GGML_VULKAN OFF CACHE BOOL "Vulkan disabled (VULKAN_SDK not set)" FORCE)
+    endif()
+endif()
+
 if (NOT XCODE AND NOT MSVC AND NOT CMAKE_BUILD_TYPE)
     set(CMAKE_BUILD_TYPE Release CACHE STRING "Build type" FORCE)
     set_property(CACHE CMAKE_BUILD_TYPE PROPERTY STRINGS "Debug" "Release" "MinSizeRel" "RelWithDebInfo")

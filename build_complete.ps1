@@ -172,11 +172,120 @@ static bool is_type_supported(enum ggml_type type) {
 }
 
 Write-Status "=== BitNet Complete Build Script ==="
+Write-Status ""
 
-# 1. Verify all required tools are installed
-Write-Status "1. Verifying required tools..."
-# Skip tool verification for now since we know they're available
-Write-Status "   Tool verification temporarily disabled - proceeding with build"
+# 1. VERIFY ALL REQUIRED TOOLS FIRST (fail fast before spending time on Python setup)
+Write-Status "1. Verifying ALL required tools before proceeding..."
+Write-Status ""
+
+$allToolsFound = $true
+$criticalToolsMissing = @()
+
+# Check CMake
+Write-Status "   Checking CMake..."
+$cmakePath = "C:\Program Files\Microsoft Visual Studio\2022\Community\Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin"
+if (Test-Path "$cmakePath\cmake.exe") {
+    $env:PATH = "$cmakePath;$env:PATH"
+    $cmakeVersion = & cmake --version 2>$null | Select-Object -First 1
+    Write-Status "   [OK] CMake found: $cmakeVersion" $Green
+} else {
+    Write-Status "   [FAIL] CMake not found at: $cmakePath" $Red
+    $criticalToolsMissing += "CMake"
+    $allToolsFound = $false
+}
+
+# Check Clang
+Write-Status "   Checking Clang..."
+$clangPath = "C:\Program Files\Microsoft Visual Studio\2022\Community\VC\Tools\Llvm\x64\bin"
+if (Test-Path "$clangPath\clang.exe") {
+    $clangVersion = & "$clangPath\clang.exe" --version 2>$null | Select-Object -First 1
+    Write-Status "   [OK] Clang found: $clangVersion" $Green
+} else {
+    Write-Status "   [FAIL] Clang not found at: $clangPath" $Red
+    $criticalToolsMissing += "Clang"
+    $allToolsFound = $false
+}
+
+# Check CUDA (look for all versions)
+Write-Status "   Checking CUDA..."
+$cudaBasePath = "C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA"
+if (Test-Path $cudaBasePath) {
+    $cudaVersions = Get-ChildItem $cudaBasePath -Directory | Where-Object { $_.Name -match "^v\d" } | Sort-Object Name -Descending
+    if ($cudaVersions) {
+        $cudaDir = $cudaVersions[0].FullName
+        $env:PATH = "$cudaDir\bin;$env:PATH"
+        $env:CUDA_PATH = $cudaDir
+        $env:CUDA_HOME = $cudaDir
+        Write-Status "   [OK] CUDA found: $($cudaVersions[0].Name)" $Green
+    } else {
+        Write-Status "   [WARN] CUDA directory exists but no versions found" $Yellow
+    }
+} else {
+    Write-Status "   [WARN] CUDA not found - GPU builds will not work" $Yellow
+}
+
+# Check Vulkan SDK
+Write-Status "   Checking Vulkan SDK..."
+$vulkanPath = "C:\VulkanSDK\1.4.328.1\Bin"
+if (Test-Path $vulkanPath) {
+    $env:PATH = "$vulkanPath;$env:PATH"
+    $env:VULKAN_SDK = "C:\VulkanSDK\1.4.328.1"
+    Write-Status "   [OK] Vulkan SDK found" $Green
+} else {
+    Write-Status "   [WARN] Vulkan SDK not found - Vulkan builds will not work" $Yellow
+}
+
+# Check Git
+Write-Status "   Checking Git..."
+if (Test-CommandExists "git") {
+    $gitVersion = & git --version 2>$null
+    Write-Status "   [OK] Git found: $gitVersion" $Green
+} else {
+    Write-Status "   [FAIL] Git not found in PATH" $Red
+    $criticalToolsMissing += "Git"
+    $allToolsFound = $false
+}
+
+# Check Python
+Write-Status "   Checking Python..."
+$pythonFound = $false
+if (Test-CommandExists "py") {
+    $pythonVersion = & py --version 2>$null
+    Write-Status "   [OK] Python found: $pythonVersion" $Green
+    $pythonFound = $true
+} elseif (Test-CommandExists "python") {
+    $pythonVersion = & python --version 2>$null
+    Write-Status "   [OK] Python found: $pythonVersion" $Green
+    $pythonFound = $true
+} else {
+    Write-Status "   [FAIL] Python not found in PATH" $Red
+    $criticalToolsMissing += "Python"
+    $allToolsFound = $false
+}
+
+Write-Status ""
+
+# FAIL FAST if critical tools are missing
+if (-not $allToolsFound) {
+    Write-Status "========================================" $Red
+    Write-Status "CRITICAL TOOLS MISSING!" $Red
+    Write-Status "========================================" $Red
+    Write-Status ""
+    Write-Status "The following required tools were not found:" $Red
+    foreach ($tool in $criticalToolsMissing) {
+        Write-Status "   - $tool" $Red
+    }
+    Write-Status ""
+    Write-Status "Please install missing tools before running this script." $Red
+    Write-Status "See comments at top of script for installation instructions." $Red
+    Write-Status ""
+    exit 1
+}
+
+Write-Status "========================================" $Green
+Write-Status "ALL REQUIRED TOOLS VERIFIED!" $Green
+Write-Status "========================================" $Green
+Write-Status ""
 
 # 2. Initialize git submodules
 Write-Status "2. Initializing git submodules..."
@@ -328,21 +437,39 @@ foreach ($package in $otherPackages) {
     }
 }
 
-# Project requirements
-if (Test-Path "requirements.txt") {
-    Write-Status "   Installing project requirements..."
-    & $pythonCmd -m pip install -r requirements.txt
+# Install GGUF package directly (avoid requirements.txt conflicts)
+Write-Status "   Installing GGUF package from llama.cpp..."
+& $pythonCmd -m pip install 3rdparty/llama.cpp/gguf-py
     if ($LASTEXITCODE -ne 0) {
-        Write-Status "   Warning: Failed to install project requirements, continuing..." $Yellow
+    Write-Status "   Warning: Failed to install GGUF package, continuing..." $Yellow
+}
+
+# Install GPU requirements individually (SKIP torch/xformers - already installed with CUDA!)
+Write-Status "   Installing GPU requirements (skipping torch/xformers to preserve CUDA version)..."
+$gpuPackagesOnly = @(
+    "fire",
+    "sentencepiece",
+    "tiktoken",
+    "blobfile",
+    "flask",
+    "einops",
+    "transformers"
+)
+
+foreach ($package in $gpuPackagesOnly) {
+    & $pythonCmd -m pip install $package
+    if ($LASTEXITCODE -ne 0) {
+        Write-Status "   Warning: Failed to install $package, continuing..." $Yellow
     }
 }
 
-if (Test-Path "gpu\requirements.txt") {
-    Write-Status "   Installing GPU requirements..."
-    & $pythonCmd -m pip install -r gpu\requirements.txt
-    if ($LASTEXITCODE -ne 0) {
-        Write-Status "   Warning: Failed to install GPU requirements, continuing..." $Yellow
-    }
+# Verify torch version is still CUDA
+Write-Status "   Verifying PyTorch CUDA version preserved..."
+$torchVersion = & $pythonCmd -c "import torch; print(torch.__version__)" 2>$null
+if ($torchVersion -like "*cu121*") {
+    Write-Status "   [OK] PyTorch CUDA 12.1 preserved: $torchVersion" $Green
+} else {
+    Write-Status "   [WARN] PyTorch version is $torchVersion (expected cu121)" $Yellow
 }
 
 Write-Status "   All Python packages installed successfully"
@@ -379,22 +506,24 @@ foreach ($file in $kernelFiles) {
 }
 
 if ($missingKernelFiles.Count -gt 0) {
-    Write-Status "   Some kernel files are missing, creating dummy files..." $Yellow
-    # Create dummy kernel files as fallback to allow compilation to proceed
-    # Note: Performance may be suboptimal with dummy files
-    if (!(Test-Path "include\bitnet-lut-kernels.h")) {
-        Write-Status "   Creating dummy bitnet-lut-kernels.h..." $Yellow
+    Write-Status "   Some kernel files are missing, using preset kernels..." $Yellow
+    # Use preset kernels as fallback (like Linux workflow does)
+    $presetKernelPath = "preset_kernels\bitnet_b1_58-3B\bitnet-lut-kernels-tl2.h"
+    if (Test-Path $presetKernelPath) {
+        Copy-Item $presetKernelPath "include\bitnet-lut-kernels.h" -Force
+        Write-Status "   [OK] Copied preset TL2 kernel header"
+    } else {
+        Write-Status "   Warning: Preset kernel not found, creating minimal fallback..." $Yellow
         '#ifndef BITNET_LUT_KERNELS_H
 #define BITNET_LUT_KERNELS_H
-
-// Dummy header for build process
-// This will be replaced with actual kernel code during code generation
-
+#include <cstring>
+#include <immintrin.h>
+// Minimal header for build process
 #endif // BITNET_LUT_KERNELS_H' | Out-File -FilePath "include\bitnet-lut-kernels.h" -Encoding UTF8
     }
 
     if (!(Test-Path "include\kernel_config.ini")) {
-        Write-Status "   Creating dummy kernel_config.ini..." $Yellow
+        Write-Status "   Creating kernel_config.ini..." $Yellow
         '[kernel]
 BM=256,128,256
 BK=96,96,96
@@ -402,6 +531,44 @@ bm=32,32,32' | Out-File -FilePath "include\kernel_config.ini" -Encoding UTF8
     }
 } else {
     Write-Status "   Required kernel files are available"
+}
+
+# Apply critical patches to kernel header (like Linux workflow lines 222-225)
+Write-Status "   Applying kernel header patches..."
+if (Test-Path "include\bitnet-lut-kernels.h") {
+    $kernelContent = Get-Content "include\bitnet-lut-kernels.h" -Raw
+    
+    # Check if it's a preset kernel (starts with #if defined) - DON'T PATCH IT!
+    if ($kernelContent -match "^#if defined\(GGML_BITNET") {
+        Write-Status "   [OK] Kernel header is preset kernel - no patching needed"
+    }
+    # Check if it's a generated kernel that needs includes added
+    elseif ($kernelContent -notmatch "#include <cstring>") {
+        # Only patch if file is long enough (more than 10 lines) - avoid corrupting minimal headers
+        $lineCount = (Get-Content "include\bitnet-lut-kernels.h" | Measure-Object -Line).Lines
+        if ($lineCount -gt 10) {
+            # Insert includes at the top after header guards
+            $lines = Get-Content "include\bitnet-lut-kernels.h"
+            $newContent = @()
+            $headerGuardFound = $false
+            foreach ($line in $lines) {
+                $newContent += $line
+                # After the #define BITNET_LUT_KERNELS_H line, add includes
+                if ($line -match "^#define BITNET_LUT_KERNELS_H" -and -not $headerGuardFound) {
+                    $newContent += "#include <cstring>"
+                    $newContent += "#include <immintrin.h>"
+                    $newContent += ""
+                    $headerGuardFound = $true
+                }
+            }
+            $newContent | Out-File -FilePath "include\bitnet-lut-kernels.h" -Encoding UTF8
+            Write-Status "   [OK] Added missing includes to generated kernel header"
+        } else {
+            Write-Status "   [WARN] Kernel header too short to patch safely - skipping"
+        }
+    } else {
+        Write-Status "   [OK] Kernel header already has required includes"
+    }
 }
 
 # 13. Build BitNet CUDA kernels
@@ -422,26 +589,37 @@ if (Test-Path "gpu\bitnet_kernels") {
     Set-Location ..\..
 }
 
-# 14. Create build directories
-Write-Status "14. Creating build directories..."
+# 14. Clean CMake caches and create build directories
+Write-Status "14. Cleaning CMake caches and creating build directories..."
+
+# Clean old CMake caches to avoid toolset conflicts
+$buildDirs = @("build-standard", "build-gpu", "build-bitnet")
+foreach ($dir in $buildDirs) {
+    if (Test-Path $dir) {
+        Write-Status "   Cleaning CMake cache in $dir..." $Yellow
+        Remove-Item "$dir\CMakeCache.txt" -Force -ErrorAction SilentlyContinue
+        Remove-Item "$dir\CMakeFiles" -Recurse -Force -ErrorAction SilentlyContinue
+    }
+}
+
 if ($CleanBuild -and (Test-Path $BuildDir)) {
-    Write-Status "   Cleaning previous build..." $Yellow
+    Write-Status "   Cleaning previous build output..." $Yellow
     Remove-Item -Recurse -Force $BuildDir
 }
 
 New-Item -ItemType Directory -Path "$BuildDir\cpu\windows" -Force | Out-Null
 New-Item -ItemType Directory -Path "$BuildDir\gpu\windows" -Force | Out-Null
 
-# 15. Build Standard CPU Version
+Write-Status "   Build directories ready"
+
+# 15. Build Standard CPU Version (from repo root, like Linux)
 Write-Status "15. Building Standard CPU Version..."
 try {
+    # Build from repo root (BitNet's conditional Clang check won't fail without BITNET flags)
     & cmake -B "build-standard" `
-        -DBITNET_X86_TL2=ON `
         -T ClangCL `
-        -DCMAKE_C_COMPILER=clang `
-        -DCMAKE_CXX_COMPILER=clang++ `
         -DLLAMA_BUILD_SERVER=ON `
-        -DLLAMA_BUILD_TESTS=ON
+        -DLLAMA_BUILD_EXAMPLES=ON
     
     if ($LASTEXITCODE -ne 0) {
         throw "CMake configure failed"
@@ -453,23 +631,50 @@ try {
     }
     
     Write-Status "   Standard CPU version built successfully"
+    $env:STANDARD_CPU_SUCCESS = "true"
 } catch {
-    Write-Status "   Warning: Failed to build standard CPU version, continuing..." $Yellow
+    Write-Status "   Warning: Failed to build standard CPU version: $_" $Yellow
+    $env:STANDARD_CPU_SUCCESS = "false"
 }
 
-# 16. Build GPU Version (Vulkan + CUDA)
-Write-Status "16. Building GPU Version (Vulkan + CUDA)..."
+# 16. Build GPU Version (Try CUDA + Vulkan, fallback to CUDA-only, like Linux)
+Write-Status "16. Building GPU Version (CUDA + Vulkan)..."
 try {
+    # Try CUDA + Vulkan first
+    Write-Status "   Trying with Vulkan support..."
     & cmake -B "build-gpu" `
-        -DBITNET_X86_TL2=ON `
-        -T ClangCL `
-        -DCMAKE_C_COMPILER=clang `
-        -DCMAKE_CXX_COMPILER=clang++ `
         -DGGML_VULKAN=ON `
         -DGGML_CUDA=ON `
         -DCMAKE_CUDA_ARCHITECTURES=75 `
         -DLLAMA_BUILD_SERVER=ON `
-        -DLLAMA_BUILD_TESTS=ON
+        -DLLAMA_BUILD_EXAMPLES=ON
+    
+    if ($LASTEXITCODE -eq 0) {
+        & cmake --build build-gpu --config Release --parallel
+        if ($LASTEXITCODE -eq 0) {
+            Write-Status "   GPU version built successfully (CUDA + Vulkan)"
+            $env:STANDARD_GPU_SUCCESS = "true"
+            $env:GPU_VULKAN_SUCCESS = "true"
+        } else {
+            throw "Build with Vulkan failed"
+        }
+    } else {
+        throw "Configure with Vulkan failed"
+    }
+} catch {
+    Write-Status "   Warning: Vulkan build failed, trying CUDA-only..." $Yellow
+    
+    # Clean failed build and try CUDA-only
+    Remove-Item "build-gpu\CMakeCache.txt" -Force -ErrorAction SilentlyContinue
+    Remove-Item "build-gpu\CMakeFiles" -Recurse -Force -ErrorAction SilentlyContinue
+    
+    try {
+        & cmake -B "build-gpu" `
+            -DGGML_VULKAN=OFF `
+            -DGGML_CUDA=ON `
+            -DCMAKE_CUDA_ARCHITECTURES=75 `
+            -DLLAMA_BUILD_SERVER=ON `
+            -DLLAMA_BUILD_EXAMPLES=ON
     
     if ($LASTEXITCODE -ne 0) {
         throw "CMake configure failed"
@@ -480,25 +685,27 @@ try {
         throw "Build failed"
     }
     
-    Write-Status "   GPU version built successfully"
+        Write-Status "   GPU version built successfully (CUDA-only)"
+        $env:STANDARD_GPU_SUCCESS = "true"
+        $env:GPU_VULKAN_SUCCESS = "false"
 } catch {
-    Write-Status "   Warning: Failed to build GPU version, continuing..." $Yellow
+        Write-Status "   Warning: GPU build failed completely: $_" $Yellow
+        $env:STANDARD_GPU_SUCCESS = "false"
+        $env:GPU_VULKAN_SUCCESS = "false"
+    }
 }
 
-# 17. Build BitNet Specialized Version
-Write-Status "17. Building BitNet Specialized Version..."
+# 17. Build BitNet Specialized Version (CPU with TL2 kernels using ClangCL)
+Write-Status "17. Building BitNet Specialized Version (CPU with TL2)..."
 try {
+    # BitNet REQUIRES Clang - use ClangCL for C++ (GPU is Python extension built separately)
     & cmake -B "build-bitnet" `
         -DBITNET_X86_TL2=ON `
         -T ClangCL `
         -DCMAKE_C_COMPILER=clang `
         -DCMAKE_CXX_COMPILER=clang++ `
-        -DGGML_VULKAN=ON `
-        -DGGML_CUDA=ON `
-        -DGGML_BITNET_X86_TL2=ON `
-        -DCMAKE_CUDA_ARCHITECTURES=75 `
         -DLLAMA_BUILD_SERVER=ON `
-        -DLLAMA_BUILD_TESTS=ON
+        -DLLAMA_BUILD_EXAMPLES=ON
     
     if ($LASTEXITCODE -ne 0) {
         throw "CMake configure failed"
@@ -510,38 +717,48 @@ try {
     }
     
     Write-Status "   BitNet specialized version built successfully"
+    $env:BITNET_CPU_SUCCESS = "true"
 } catch {
-    Write-Status "   Warning: Failed to build BitNet specialized version, continuing..." $Yellow
+    Write-Status "   Warning: Failed to build BitNet specialized version: $_" $Yellow
+    $env:BITNET_CPU_SUCCESS = "false"
 }
 
 # 18. Organize binaries as requested
 Write-Status "18. Organizing binaries..."
 
-# Copy binaries if they exist
-if (Test-Path "build-standard\bin\Release\llama-server.exe") {
-    Copy-Item "build-standard\bin\Release\llama-server.exe" "$BuildDir\cpu\windows\llama-server-standard.exe" -Force
-    Copy-Item "build-standard\bin\Release\llama-cli.exe" "$BuildDir\cpu\windows\llama-cli-standard.exe" -Force
-    Copy-Item "build-standard\bin\Release\llama-bench.exe" "$BuildDir\cpu\windows\llama-bench-standard.exe" -Force
-    Write-Status "   Standard CPU binaries copied"
+# Copy Standard CPU binaries if build succeeded
+if ($env:STANDARD_CPU_SUCCESS -eq "true" -and (Test-Path "build-standard\bin\Release\llama-server.exe")) {
+    Copy-Item "build-standard\bin\Release\llama-server.exe" "$BuildDir\cpu\windows\llama-server-standard.exe" -Force -ErrorAction SilentlyContinue
+    Copy-Item "build-standard\bin\Release\llama-cli.exe" "$BuildDir\cpu\windows\llama-cli-standard.exe" -Force -ErrorAction SilentlyContinue
+    Copy-Item "build-standard\bin\Release\llama-bench.exe" "$BuildDir\cpu\windows\llama-bench-standard.exe" -Force -ErrorAction SilentlyContinue
+    Write-Status "   [OK] Standard CPU binaries copied"
+} else {
+    Write-Status "   [WARN] Standard CPU build failed or binaries not found - skipping" $Yellow
 }
 
-if (Test-Path "build-gpu\bin\Release\llama-server.exe") {
-    Copy-Item "build-gpu\bin\Release\llama-server.exe" "$BuildDir\cpu\windows\llama-server-gpu.exe" -Force
-    Copy-Item "build-gpu\bin\Release\llama-cli.exe" "$BuildDir\cpu\windows\llama-cli-gpu.exe" -Force
-    Copy-Item "build-gpu\bin\Release\llama-bench.exe" "$BuildDir\cpu\windows\llama-bench-gpu.exe" -Force
+# Copy GPU binaries if build succeeded
+if ($env:STANDARD_GPU_SUCCESS -eq "true" -and (Test-Path "build-gpu\bin\Release\llama-server.exe")) {
+    Copy-Item "build-gpu\bin\Release\llama-server.exe" "$BuildDir\cpu\windows\llama-server-gpu.exe" -Force -ErrorAction SilentlyContinue
+    Copy-Item "build-gpu\bin\Release\llama-cli.exe" "$BuildDir\cpu\windows\llama-cli-gpu.exe" -Force -ErrorAction SilentlyContinue
+    Copy-Item "build-gpu\bin\Release\llama-bench.exe" "$BuildDir\cpu\windows\llama-bench-gpu.exe" -Force -ErrorAction SilentlyContinue
     
     # Alternative naming (CUDA-specific)
-    Copy-Item "build-gpu\bin\Release\llama-server.exe" "$BuildDir\cpu\windows\llama-server-cuda.exe" -Force
-    Copy-Item "build-gpu\bin\Release\llama-cli.exe" "$BuildDir\cpu\windows\llama-cli-cuda.exe" -Force
-    Copy-Item "build-gpu\bin\Release\llama-bench.exe" "$BuildDir\cpu\windows\llama-bench-cuda.exe" -Force
-    Write-Status "   GPU binaries copied"
+    Copy-Item "build-gpu\bin\Release\llama-server.exe" "$BuildDir\cpu\windows\llama-server-cuda.exe" -Force -ErrorAction SilentlyContinue
+    Copy-Item "build-gpu\bin\Release\llama-cli.exe" "$BuildDir\cpu\windows\llama-cli-cuda.exe" -Force -ErrorAction SilentlyContinue
+    Copy-Item "build-gpu\bin\Release\llama-bench.exe" "$BuildDir\cpu\windows\llama-bench-cuda.exe" -Force -ErrorAction SilentlyContinue
+    Write-Status "   [OK] GPU binaries copied"
+} else {
+    Write-Status "   [WARN] GPU build failed or binaries not found - skipping" $Yellow
 }
 
-if (Test-Path "build-bitnet\bin\Release\llama-server.exe") {
-    Copy-Item "build-bitnet\bin\Release\llama-server.exe" "$BuildDir\cpu\windows\llama-server-bitnet.exe" -Force
-    Copy-Item "build-bitnet\bin\Release\llama-cli.exe" "$BuildDir\cpu\windows\llama-cli-bitnet.exe" -Force
-    Copy-Item "build-bitnet\bin\Release\llama-bench.exe" "$BuildDir\cpu\windows\llama-bench-bitnet.exe" -Force
-    Write-Status "   BitNet specialized binaries copied"
+# Copy BitNet specialized binaries if build succeeded
+if ($env:BITNET_CPU_SUCCESS -eq "true" -and (Test-Path "build-bitnet\bin\Release\llama-server.exe")) {
+    Copy-Item "build-bitnet\bin\Release\llama-server.exe" "$BuildDir\cpu\windows\llama-server-bitnet.exe" -Force -ErrorAction SilentlyContinue
+    Copy-Item "build-bitnet\bin\Release\llama-cli.exe" "$BuildDir\cpu\windows\llama-cli-bitnet.exe" -Force -ErrorAction SilentlyContinue
+    Copy-Item "build-bitnet\bin\Release\llama-bench.exe" "$BuildDir\cpu\windows\llama-bench-bitnet.exe" -Force -ErrorAction SilentlyContinue
+    Write-Status "   [OK] BitNet specialized binaries copied"
+} else {
+    Write-Status "   [WARN] BitNet specialized build failed or binaries not found - skipping" $Yellow
 }
 
 # GPU modules
@@ -613,20 +830,53 @@ Copy-Item "$BuildDir\cpu\windows\*" "Release\cpu\windows\" -Force -ErrorAction S
 Write-Status "   Copying GPU modules to Release folder..."
 Copy-Item "$BuildDir\gpu\windows\*" "Release\gpu\windows\" -Force -ErrorAction SilentlyContinue
 
-Write-Status "=== Build Complete! ==="
-Write-Status "Binaries located in: ${BuildDir}" $Yellow
-Write-Status "CPU binaries: ${BuildDir}\cpu\windows\" $Yellow
-Write-Status "GPU modules: ${BuildDir}\gpu\windows\" $Yellow
-Write-Status "Also copied to Release folder for other projects" $Yellow
+Write-Status ""
+Write-Status "=== Build Complete! ===" $Green
+Write-Status ""
+
+# Build Summary (like Linux workflow)
+Write-Status "📋 BUILD SUMMARY:"
+$standardSuccess = if ($env:STANDARD_CPU_SUCCESS -eq "true") { "✅ SUCCESS" } else { "❌ FAILED" }
+$gpuSuccess = if ($env:STANDARD_GPU_SUCCESS -eq "true") { "✅ SUCCESS" } else { "❌ FAILED" }
+$vulkanStatus = if ($env:GPU_VULKAN_SUCCESS -eq "true") { "✅ ENABLED" } else { "❌ DISABLED" }
+$bitnetSuccess = if ($env:BITNET_CPU_SUCCESS -eq "true") { "✅ SUCCESS" } else { "❌ FAILED" }
+
+Write-Status "Standard CPU Build: $standardSuccess"
+Write-Status "Standard GPU Build: $gpuSuccess"
+Write-Status "Vulkan Support: $vulkanStatus"
+Write-Status "BitNet Specialized Build (TL2): $bitnetSuccess"
+Write-Status ""
+
+Write-Status "📁 Binaries located in: ${BuildDir}\cpu\windows\" $Yellow
+Write-Status "📁 GPU modules located in: ${BuildDir}\gpu\windows\" $Yellow
+Write-Status "📁 Also copied to Release\ folder" $Yellow
+Write-Status ""
 
 if (Test-Path "$BuildDir\cpu\windows") {
     Write-Status "Available CPU binaries:"
-    Get-ChildItem "$BuildDir\cpu\windows\*.exe" -ErrorAction SilentlyContinue | ForEach-Object { Write-Status "   $($_.Name)" }
+    $exeFiles = Get-ChildItem "$BuildDir\cpu\windows\*.exe" -ErrorAction SilentlyContinue
+    if ($exeFiles) {
+        $exeFiles | ForEach-Object { Write-Status "   [OK] $($_.Name)" $Green }
+    } else {
+        Write-Status "   [WARN] No binaries found" $Yellow
+    }
 }
+Write-Status ""
 
 if (Test-Path "$BuildDir\gpu\windows") {
     Write-Status "Available GPU modules:"
-    Get-ChildItem "$BuildDir\gpu\windows\*" -ErrorAction SilentlyContinue | ForEach-Object { Write-Status "   $($_.Name)" }
+    $gpuFiles = Get-ChildItem "$BuildDir\gpu\windows\*" -ErrorAction SilentlyContinue
+    if ($gpuFiles) {
+        $gpuFiles | ForEach-Object { Write-Status "   [OK] $($_.Name)" }
+    } else {
+        Write-Status "   [WARN] No modules found" $Yellow
+    }
 }
+Write-Status ""
 
-Write-Status "Build process completed successfully!" $Green
+# Determine overall status
+if ($env:STANDARD_CPU_SUCCESS -eq "true" -or $env:STANDARD_GPU_SUCCESS -eq "true" -or $env:BITNET_CPU_SUCCESS -eq "true") {
+    Write-Status "Build process completed with at least one successful build!" $Green
+} else {
+    Write-Status "Build process completed but all builds failed. Check errors above." $Red
+}
