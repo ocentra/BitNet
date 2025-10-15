@@ -97,8 +97,12 @@ jobs:
           sudo rm -rf /usr/local/cuda-12.1/libnvvp || true
           sudo rm -rf /usr/local/cuda-12.1/doc || true
           sudo rm -rf /usr/local/cuda-12.1/samples || true
+          
+          # Clean up ALL temp files and downloads
           sudo apt-get clean
+          sudo rm -rf /var/cache/apt/archives/*.deb
           sudo rm -rf /var/lib/apt/lists/*
+          rm -f cuda-keyring_*.deb
           
           echo "CUDA_HOME=/usr/local/cuda-12.1" >> $GITHUB_ENV
           echo "/usr/local/cuda-12.1/bin" >> $GITHUB_PATH
@@ -113,19 +117,19 @@ jobs:
           python3 --version  # Should show 3.11.x
           python3 -m pip install --upgrade pip
           
-          # Install PyTorch with CUDA 12.1 support (cu121, not cu118!)
-          python3 -m pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121
+          # Install PyTorch + xformers with CUDA 12.1 support (cu121!)
+          python3 -m pip install torch torchvision torchaudio xformers --index-url https://download.pytorch.org/whl/cu121
           
           # Clean pip cache immediately to save space
           python3 -m pip cache purge
           
-          # Install GPU requirements (includes xformers)
-          python3 -m pip install -r gpu/requirements.txt
+          # Install other GPU requirements (skip torch/xformers - already installed)
+          python3 -m pip install fire sentencepiece tiktoken blobfile flask einops transformers
           
           # Clean pip cache again
           python3 -m pip cache purge
           
-          echo "✅ Python 3.11 + PyTorch cu121 installed, checking space:"
+          echo "✅ Python 3.11 + PyTorch cu121 + xformers installed, checking space:"
           df -h
       
       - name: Build Standard CPU Binary
