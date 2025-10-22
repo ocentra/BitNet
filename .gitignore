@@ -25,6 +25,13 @@ build-*/**/*.exe
 build-*/**/*.dll
 build-*/**/*.so
 
+# Binaries (these go to BitnetRelease/ repo)
+gpu/**/*.dll
+gpu/**/*.so
+gpu/**/*.pyd
+libs/**/*.dll
+libs/**/*.so
+
 # IDE / OS
 .cache/
 .ccls-cache/
