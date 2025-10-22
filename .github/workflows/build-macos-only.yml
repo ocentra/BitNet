@@ -360,32 +360,32 @@ jobs:
         run: |
           echo "📦 Creating ZIP archive for macOS builds ONLY..."
           
-          # Create temp directory with ONLY macOS builds
-          mkdir -p macos-release/cpu/macos
-          mkdir -p macos-release/gpu/macos
+          # Create temp directory structure (preserves full directory tree)
+          mkdir -p macos-release/cpu
+          mkdir -p macos-release/gpu
           
-          # Copy ONLY macOS files
-          cp -r BitnetRelease/cpu/macos/* macos-release/cpu/macos/ 2>/dev/null || true
-          cp -r BitnetRelease/gpu/macos/* macos-release/gpu/macos/ 2>/dev/null || true
+          # Copy ENTIRE macOS directories (no filtering - just like Windows/Linux)
+          cp -r BitnetRelease/cpu/macos macos-release/cpu/ 2>/dev/null || true
+          cp -r BitnetRelease/gpu/macos macos-release/gpu/ 2>/dev/null || true
           
           # Copy READMEs
           cp BitnetRelease/README.md macos-release/ 2>/dev/null || true
           cp BitnetRelease/DEVELOPER_GUIDE.md macos-release/ 2>/dev/null || true
           cp BitnetRelease/LICENSE macos-release/ 2>/dev/null || true
           
-          # Zip CPU variants (macOS only)
+          # Zip CPU variants (entire cpu/macos/ directory tree)
           cd macos-release
-          zip -r ../macos-cpu-all.zip cpu/macos/
+          zip -r ../macos-cpu-all.zip cpu/
           
-          # Zip GPU variant (macOS only)
-          zip -r ../macos-gpu-metal.zip gpu/macos/
+          # Zip GPU variant (entire gpu/macos/ directory tree)
+          zip -r ../macos-gpu-metal.zip gpu/
           
-          # Zip everything together (macOS only)
+          # Zip everything together (complete macOS structure)
           cd ..
           zip -r macos-complete.zip macos-release/
           
           echo ""
-          echo "✅ ZIP files created (macOS builds only):"
+          echo "✅ ZIP files created (macOS builds only - full directory structure):"
           ls -lh macos-*.zip
           
           # Cleanup temp directory
