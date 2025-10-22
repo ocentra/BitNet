@@ -2,6 +2,7 @@
 *.a
 *.bat
 *.bin
+*.deb
 *.dot
 *.etag
 *.gcda
