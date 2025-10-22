@@ -1,4 +1,4 @@
-name: Build macOS Binaries Only
+name: Build macOS Binaries (All Variants)
 
 on:
   workflow_dispatch:
@@ -10,10 +10,10 @@ on:
 
 jobs:
   # ============================================================================
-  # Build CPU Binary for macOS (ARM64 TL1)
+  # Build ALL macOS Variants (ARM + Intel + Standard + Metal)
   # ============================================================================
-  build-cpu-macos:
-    name: Build CPU Binary (macOS ARM64 TL1)
+  build-macos-all:
+    name: Build All macOS Variants (4 variants)
     runs-on: macos-latest
     
     steps:
@@ -23,220 +23,434 @@ jobs:
           submodules: recursive
       
       - name: Install dependencies
-        run: brew install cmake
-      
-      - name: Build Standard CPU Binary (Metal)
         run: |
-          echo "🔨 Building Standard CPU Binary (Metal)..."
-          mkdir build-standard && cd build-standard
-          if cmake .. -DGGML_METAL=ON -DLLAMA_BUILD_SERVER=ON -DLLAMA_BUILD_EXAMPLES=ON -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++ && cmake --build . --config Release; then
+          echo "🔧 Installing dependencies..."
+          brew install cmake
+          echo "✅ CMake installed: $(cmake --version | head -1)"
+          echo "✅ Clang: $(clang --version | head -1)"
+      
+      # ========================================================================
+      # VARIANT 1: BitNet ARM (M1/M2/M3/M4 with TL1 kernels)
+      # ========================================================================
+      - name: Build BitNet ARM (Apple Silicon)
+        run: |
+          echo "🔨 Building BitNet ARM (M1/M2/M3/M4 - TL1 kernels)..."
+          
+          cmake -B build-macos-bitnet-arm \
+            -DBITNET_ARM_TL1=ON \
+            -DCMAKE_C_COMPILER=clang \
+            -DCMAKE_CXX_COMPILER=clang++ \
+            -DLLAMA_BUILD_SERVER=ON \
+            -DLLAMA_BUILD_EXAMPLES=ON \
+            .
+          
+          if cmake --build build-macos-bitnet-arm --config Release -j; then
+            echo "BITNET_ARM_SUCCESS=true" >> $GITHUB_ENV
+            echo "✅ BitNet ARM build SUCCESS"
+          else
+            echo "BITNET_ARM_SUCCESS=false" >> $GITHUB_ENV
+            echo "❌ BitNet ARM build FAILED"
+          fi
+      
+      # ========================================================================
+      # VARIANT 2: BitNet Intel (Intel Macs with TL2 kernels)
+      # ========================================================================
+      - name: Build BitNet Intel (Intel Macs)
+        run: |
+          echo "🔨 Building BitNet Intel (x86 - TL2 kernels)..."
+          
+          cmake -B build-macos-bitnet-intel \
+            -DBITNET_X86_TL2=ON \
+            -DCMAKE_C_COMPILER=clang \
+            -DCMAKE_CXX_COMPILER=clang++ \
+            -DCMAKE_OSX_ARCHITECTURES=x86_64 \
+            -DLLAMA_BUILD_SERVER=ON \
+            -DLLAMA_BUILD_EXAMPLES=ON \
+            .
+          
+          if cmake --build build-macos-bitnet-intel --config Release -j; then
+            echo "BITNET_INTEL_SUCCESS=true" >> $GITHUB_ENV
+            echo "✅ BitNet Intel build SUCCESS"
+          else
+            echo "BITNET_INTEL_SUCCESS=false" >> $GITHUB_ENV
+            echo "❌ BitNet Intel build FAILED"
+          fi
+      
+      # ========================================================================
+      # VARIANT 3: Standard CPU (no BitNet, universal)
+      # ========================================================================
+      - name: Build Standard CPU (universal)
+        run: |
+          echo "🔨 Building Standard CPU (no BitNet)..."
+          
+          cmake -B build-macos-standard-cpu \
+            -DCMAKE_C_COMPILER=clang \
+            -DCMAKE_CXX_COMPILER=clang++ \
+            -DGGML_METAL=OFF \
+            -DLLAMA_BUILD_SERVER=ON \
+            -DLLAMA_BUILD_EXAMPLES=ON \
+            3rdparty/llama.cpp
+          
+          if cmake --build build-macos-standard-cpu --config Release -j; then
+            echo "STANDARD_CPU_SUCCESS=true" >> $GITHUB_ENV
             echo "✅ Standard CPU build SUCCESS"
-            echo "STANDARD_BUILD_SUCCESS=true" >> $GITHUB_ENV
           else
+            echo "STANDARD_CPU_SUCCESS=false" >> $GITHUB_ENV
             echo "❌ Standard CPU build FAILED"
-            echo "STANDARD_BUILD_SUCCESS=false" >> $GITHUB_ENV
           fi
       
-      - name: Build BitNet CPU Binary (ARM TL1)
+      # ========================================================================
+      # VARIANT 4: Metal GPU (ALL Macs)
+      # ========================================================================
+      - name: Build Metal GPU (ALL Macs)
         run: |
-          echo "🔨 Building BitNet CPU Binary (ARM TL1)..."
-          mkdir build-bitnet && cd build-bitnet
-          if cmake .. -DBITNET_ARM_TL1=ON -DLLAMA_BUILD_SERVER=ON -DLLAMA_BUILD_EXAMPLES=ON -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++ && cmake --build . --config Release; then
-            echo "✅ BitNet CPU build SUCCESS"
-            echo "BITNET_BUILD_SUCCESS=true" >> $GITHUB_ENV
+          echo "🔨 Building Metal GPU (M1/M2/M3 + Intel)..."
+          
+          cmake -B build-macos-standard-metal \
+            -DGGML_METAL=ON \
+            -DCMAKE_C_COMPILER=clang \
+            -DCMAKE_CXX_COMPILER=clang++ \
+            -DLLAMA_BUILD_SERVER=ON \
+            -DLLAMA_BUILD_EXAMPLES=ON \
+            3rdparty/llama.cpp
+          
+          if cmake --build build-macos-standard-metal --config Release -j; then
+            echo "METAL_GPU_SUCCESS=true" >> $GITHUB_ENV
+            echo "✅ Metal GPU build SUCCESS"
           else
-            echo "❌ BitNet CPU build FAILED"
-            echo "BITNET_BUILD_SUCCESS=false" >> $GITHUB_ENV
+            echo "METAL_GPU_SUCCESS=false" >> $GITHUB_ENV
+            echo "❌ Metal GPU build FAILED"
           fi
       
-      - name: Verify and organize
+      # ========================================================================
+      # Organize & Copy All Artifacts
+      # ========================================================================
+      - name: Organize release structure
         run: |
-          echo "📁 Organizing build artifacts..."
-          mkdir -p Release/cpu/macos
+          echo "📁 Creating release directory structure..."
           
-          # Copy Standard binaries (Metal) - only if build succeeded
-          if [ "$STANDARD_BUILD_SUCCESS" = "true" ] && [ -f "build-standard/bin/llama-server" ]; then
-            cp build-standard/bin/llama-server Release/cpu/macos/llama-server-standard
-            chmod +x Release/cpu/macos/llama-server-standard
-            echo "✅ Standard CPU binary: $(ls -lh build-standard/bin/llama-server | awk '{print $5}')"
-            
-            if [ -f "build-standard/bin/llama-cli" ]; then
-              cp build-standard/bin/llama-cli Release/cpu/macos/llama-cli-standard
-              chmod +x Release/cpu/macos/llama-cli-standard
-              echo "✅ Standard CLI binary: $(ls -lh build-standard/bin/llama-cli | awk '{print $5}')"
-            fi
-            
-            if [ -f "build-standard/bin/llama-bench" ]; then
-              cp build-standard/bin/llama-bench Release/cpu/macos/llama-bench-standard
-              chmod +x Release/cpu/macos/llama-bench-standard
-              echo "✅ Standard bench binary: $(ls -lh build-standard/bin/llama-bench | awk '{print $5}')"
-            fi
-          else
-            echo "⚠️ Standard CPU build failed or binaries not found - skipping"
-          fi
+          # Create all subdirectories
+          mkdir -p BitnetRelease/cpu/macos/bitnet-arm
+          mkdir -p BitnetRelease/cpu/macos/bitnet-intel
+          mkdir -p BitnetRelease/cpu/macos/standard
+          mkdir -p BitnetRelease/gpu/macos/standard-metal
           
-          # Copy BitNet binaries (ARM TL1) - only if build succeeded
-          if [ "$BITNET_BUILD_SUCCESS" = "true" ] && [ -f "build-bitnet/bin/llama-server" ]; then
-            cp build-bitnet/bin/llama-server Release/cpu/macos/llama-server-bitnet
-            chmod +x Release/cpu/macos/llama-server-bitnet
-            echo "✅ BitNet CPU binary: $(ls -lh build-bitnet/bin/llama-server | awk '{print $5}')"
-            
-            if [ -f "build-bitnet/bin/llama-cli" ]; then
-              cp build-bitnet/bin/llama-cli Release/cpu/macos/llama-cli-bitnet
-              chmod +x Release/cpu/macos/llama-cli-bitnet
-              echo "✅ BitNet CLI binary: $(ls -lh build-bitnet/bin/llama-cli | awk '{print $5}')"
-            fi
-            
-            if [ -f "build-bitnet/bin/llama-bench" ]; then
-              cp build-bitnet/bin/llama-bench Release/cpu/macos/llama-bench-bitnet
-              chmod +x Release/cpu/macos/llama-bench-bitnet
-              echo "✅ BitNet bench binary: $(ls -lh build-bitnet/bin/llama-bench | awk '{print $5}')"
-            fi
-          else
-            echo "⚠️ BitNet CPU build failed or binaries not found - skipping"
-          fi
-          
-          # Create build summary
           echo ""
-          echo "📋 BUILD SUMMARY:"
-          echo "Standard CPU Build: $([ "$STANDARD_BUILD_SUCCESS" = "true" ] && echo "✅ SUCCESS" || echo "❌ FAILED")"
-          echo "BitNet CPU Build: $([ "$BITNET_BUILD_SUCCESS" = "true" ] && echo "✅ SUCCESS" || echo "❌ FAILED")"
+          echo "=================================================="
+          echo "Copying build artifacts to BitnetRelease/..."
+          echo "=================================================="
           echo ""
-          echo "📁 Final Release Structure:"
-          ls -lh Release/cpu/macos/ 2>/dev/null || echo "No binaries copied"
-      
-      - name: Upload CPU artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: cpu-macos
-          path: Release/cpu/macos/
-
-  # ============================================================================
-  # Copy GPU Modules for macOS (No CUDA)
-  # ============================================================================
-  copy-gpu-modules-macos:
-    name: Copy GPU Modules (macOS - No CUDA)
-    runs-on: macos-latest
-    
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-      
-      - name: Copy Python modules
-        run: |
-          mkdir -p Release/gpu/macos
           
-          # Copy Python modules
-          cp gpu/*.py Release/gpu/macos/
-          cp gpu/tokenizer.model Release/gpu/macos/
+          # ================================================================
+          # Copy BitNet ARM binaries
+          # ================================================================
+          if [ "$BITNET_ARM_SUCCESS" = "true" ]; then
+            echo "📦 Copying BitNet ARM binaries..."
+            
+            if [ -d "build-macos-bitnet-arm/bin" ]; then
+              cp -f build-macos-bitnet-arm/bin/* BitnetRelease/cpu/macos/bitnet-arm/ 2>/dev/null || true
+            fi
+            
+            # Copy .dylib files
+            find build-macos-bitnet-arm -name "*.dylib" -type f -exec cp -f {} BitnetRelease/cpu/macos/bitnet-arm/ \; 2>/dev/null || true
+            
+            chmod +x BitnetRelease/cpu/macos/bitnet-arm/* 2>/dev/null || true
+            
+            FILE_COUNT=$(ls -1 BitnetRelease/cpu/macos/bitnet-arm/ 2>/dev/null | wc -l)
+            echo "  ✅ bitnet-arm: $FILE_COUNT files copied"
+          else
+            echo "  ⚠️ BitNet ARM build failed - skipping"
+          fi
           
-          # Create README
-          cat > Release/gpu/macos/README.txt << 'EOF'
-          macOS GPU Support Limitation
-          =============================
+          # ================================================================
+          # Copy BitNet Intel binaries
+          # ================================================================
+          if [ "$BITNET_INTEL_SUCCESS" = "true" ]; then
+            echo "📦 Copying BitNet Intel binaries..."
+            
+            if [ -d "build-macos-bitnet-intel/bin" ]; then
+              cp -f build-macos-bitnet-intel/bin/* BitnetRelease/cpu/macos/bitnet-intel/ 2>/dev/null || true
+            fi
+            
+            # Copy .dylib files
+            find build-macos-bitnet-intel -name "*.dylib" -type f -exec cp -f {} BitnetRelease/cpu/macos/bitnet-intel/ \; 2>/dev/null || true
+            
+            chmod +x BitnetRelease/cpu/macos/bitnet-intel/* 2>/dev/null || true
+            
+            FILE_COUNT=$(ls -1 BitnetRelease/cpu/macos/bitnet-intel/ 2>/dev/null | wc -l)
+            echo "  ✅ bitnet-intel: $FILE_COUNT files copied"
+          else
+            echo "  ⚠️ BitNet Intel build failed - skipping"
+          fi
           
-          macOS does not support NVIDIA CUDA.
-          GPU acceleration is only available on:
-          - Windows with NVIDIA GPU (build locally)
-          - Linux with NVIDIA GPU (build locally)
+          # ================================================================
+          # Copy Standard CPU binaries
+          # ================================================================
+          if [ "$STANDARD_CPU_SUCCESS" = "true" ]; then
+            echo "📦 Copying Standard CPU binaries..."
+            
+            if [ -d "build-macos-standard-cpu/bin" ]; then
+              cp -f build-macos-standard-cpu/bin/* BitnetRelease/cpu/macos/standard/ 2>/dev/null || true
+            fi
+            
+            # Copy .dylib files
+            find build-macos-standard-cpu -name "*.dylib" -type f -exec cp -f {} BitnetRelease/cpu/macos/standard/ \; 2>/dev/null || true
+            
+            chmod +x BitnetRelease/cpu/macos/standard/* 2>/dev/null || true
+            
+            FILE_COUNT=$(ls -1 BitnetRelease/cpu/macos/standard/ 2>/dev/null | wc -l)
+            echo "  ✅ standard: $FILE_COUNT files copied"
+          else
+            echo "  ⚠️ Standard CPU build failed - skipping"
+          fi
           
-          On macOS, use CPU backend (ARM TL1 optimized).
+          # ================================================================
+          # Copy Metal GPU binaries
+          # ================================================================
+          if [ "$METAL_GPU_SUCCESS" = "true" ]; then
+            echo "📦 Copying Metal GPU binaries..."
+            
+            if [ -d "build-macos-standard-metal/bin" ]; then
+              cp -f build-macos-standard-metal/bin/* BitnetRelease/gpu/macos/standard-metal/ 2>/dev/null || true
+            fi
+            
+            # Copy .metallib files (Metal shaders)
+            find build-macos-standard-metal -name "*.metallib" -type f -exec cp -f {} BitnetRelease/gpu/macos/standard-metal/ \; 2>/dev/null || true
+            
+            # Copy .dylib files
+            find build-macos-standard-metal -name "*.dylib" -type f -exec cp -f {} BitnetRelease/gpu/macos/standard-metal/ \; 2>/dev/null || true
+            
+            chmod +x BitnetRelease/gpu/macos/standard-metal/* 2>/dev/null || true
+            
+            FILE_COUNT=$(ls -1 BitnetRelease/gpu/macos/standard-metal/ 2>/dev/null | wc -l)
+            echo "  ✅ standard-metal: $FILE_COUNT files copied"
+          else
+            echo "  ⚠️ Metal GPU build failed - skipping"
+          fi
+          
+          echo ""
+          echo "=================================================="
+          echo "Creating README & VERIFICATION files..."
+          echo "=================================================="
+          
+          # Create GPU README
+          cat > BitnetRelease/gpu/macos/README.md << 'EOF'
+          # 🍎 macOS GPU Support (Metal Only)
+          
+          ## What Works on macOS
+          
+          macOS supports **Metal GPU acceleration** for standard llama.cpp inference.
+          
+          ### ✅ Supported: Metal GPU
+          - **Technology**: Apple Metal (built into macOS)
+          - **Hardware**: ALL Macs
+            - M1/M2/M3/M4 (Apple Silicon) - **Best performance!**
+            - Intel Macs with Iris/AMD GPUs - **Good performance**
+          - **Location**: `standard-metal/`
+          
+          ### ❌ NOT Supported on macOS
+          - **CUDA**: Apple doesn't support NVIDIA GPUs
+          - **Vulkan**: Apple uses Metal instead
+          - **BitNet GPU**: Requires CUDA (Windows/Linux only)
+          
+          ## Quick Start
+          
+          ```bash
+          cd standard-metal/
+          
+          # Full GPU offload (fastest)
+          ./llama-server -m your-model.gguf -ngl 99
+          
+          # Partial GPU offload (balance CPU/GPU)
+          ./llama-server -m your-model.gguf -ngl 35
+          ```
+          
+          ---
+          Built by GitHub Actions: ${{ github.run_number }}
+          Commit: ${{ github.sha }}
           EOF
           
-          echo "✅ GPU modules copied (no CUDA kernel)"
-      
-      - name: Upload GPU artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: gpu-macos
-          path: Release/gpu/macos/
-
-  # ============================================================================
-  # Create Release Placeholder (Optional)
-  # ============================================================================
-  create-release:
-    name: Create Release Placeholder
-    needs: [build-cpu-macos, copy-gpu-modules-macos]
-    runs-on: ubuntu-latest
-    if: github.event.inputs.create_release == 'true'
-    
-    steps:
-      - name: Download macOS artifacts
-        uses: actions/download-artifact@v4
-        with:
-          path: artifacts/
-      
-      - name: Organize Release structure
-        run: |
-          mkdir -p Release/cpu/macos
-          mkdir -p Release/gpu/macos
+          # Create CPU VERIFICATION
+          cat > BitnetRelease/cpu/macos/VERIFICATION.md << 'EOF'
+          # 🔍 BitNet macOS Build Verification Report
           
-          # Copy macOS builds
-          cp artifacts/cpu-macos/* Release/cpu/macos/ 2>/dev/null || true
-          cp -r artifacts/gpu-macos/* Release/gpu/macos/ 2>/dev/null || true
+          ## Build Matrix
           
-          # Create placeholder README
-          cat > Release/README.md << 'EOF'
-          # BitNet macOS Release
+          This directory contains **4 macOS variants** (3 CPU + 1 GPU):
           
-          This release contains only macOS binaries.
-          Windows and Linux binaries are built locally and uploaded manually.
+          ### CPU Variants
+          - **bitnet-arm/** - BitNet for Apple Silicon (M1/M2/M3/M4 with TL1 kernels)
+          - **bitnet-intel/** - BitNet for Intel Macs (x86 with TL2 kernels)
+          - **standard/** - Standard llama.cpp (universal, no BitNet)
           
-          ## What's Included:
-          - ✅ macOS CPU binary (ARM64 TL1 kernels)
-          - ✅ macOS GPU modules (Python only, no CUDA)
+          ### GPU Variant
+          - **standard-metal/** - Metal GPU acceleration (ALL Macs)
           
-          ## What's Built Locally:
-          - Windows CPU + GPU (built on Windows with CUDA)
-          - Linux CPU + GPU (built on WSL2/Docker with CUDA)
+          ## Quick Start
           
-          ## Directory Structure:
+          ### For M1/M2/M3/M4 (Apple Silicon):
+          ```bash
+          cd bitnet-arm/
+          ./llama-server -m bitnet-model.gguf
           ```
-          Release/
-          ├── cpu/
-          │   ├── macos/llama-server (from CI)
-          │   ├── windows/llama-server.exe (upload manually)
-          │   └── linux/llama-server (upload manually)
-          └── gpu/
-              ├── macos/*.py (from CI)
-              ├── windows/*.pyd + *.py (upload manually)
-              └── linux/*.so + *.py (upload manually)
+          
+          ### For Intel Macs:
+          ```bash
+          cd bitnet-intel/
+          ./llama-server -m bitnet-model.gguf
           ```
+          
+          ### For Metal GPU (Best Performance):
+          ```bash
+          cd ../gpu/macos/standard-metal/
+          ./llama-server -m model.gguf -ngl 35  # Offload 35 layers to GPU
+          ```
+          
+          ## Technical Details
+          
+          - **Compiler:** Clang (from Xcode)
+          - **BitNet TL1:** ARM-optimized kernels for M1/M2/M3/M4
+          - **BitNet TL2:** x86-optimized kernels for Intel
+          - **Metal:** Apple's GPU framework (all Macs)
+          
+          ---
+          Built by GitHub Actions: ${{ github.run_number }}
+          Commit: ${{ github.sha }}
+          Date: ${{ github.event.head_commit.timestamp }}
           EOF
           
-          echo "📁 Release Structure:"
-          ls -lhR Release/
+          echo "✅ README & VERIFICATION files created"
+          
+          echo ""
+          echo "=================================================="
+          echo "BUILD SUMMARY"
+          echo "=================================================="
+          echo ""
+          echo "BitNet ARM:     $([ "$BITNET_ARM_SUCCESS" = "true" ] && echo "✅ SUCCESS" || echo "❌ FAILED")"
+          echo "BitNet Intel:   $([ "$BITNET_INTEL_SUCCESS" = "true" ] && echo "✅ SUCCESS" || echo "❌ FAILED")"
+          echo "Standard CPU:   $([ "$STANDARD_CPU_SUCCESS" = "true" ] && echo "✅ SUCCESS" || echo "❌ FAILED")"
+          echo "Metal GPU:      $([ "$METAL_GPU_SUCCESS" = "true" ] && echo "✅ SUCCESS" || echo "❌ FAILED")"
+          echo ""
+          echo "=================================================="
+          echo "FINAL STRUCTURE"
+          echo "=================================================="
+          echo ""
+          echo "BitnetRelease/cpu/macos/"
+          ls -lh BitnetRelease/cpu/macos/ 2>/dev/null || echo "  (empty)"
+          echo ""
+          for subdir in bitnet-arm bitnet-intel standard; do
+            if [ -d "BitnetRelease/cpu/macos/$subdir" ]; then
+              COUNT=$(ls -1 BitnetRelease/cpu/macos/$subdir 2>/dev/null | wc -l)
+              echo "  $subdir/: $COUNT files"
+            fi
+          done
+          echo ""
+          echo "BitnetRelease/gpu/macos/"
+          ls -lh BitnetRelease/gpu/macos/ 2>/dev/null || echo "  (empty)"
+          echo ""
+          if [ -d "BitnetRelease/gpu/macos/standard-metal" ]; then
+            COUNT=$(ls -1 BitnetRelease/gpu/macos/standard-metal 2>/dev/null | wc -l)
+            echo "  standard-metal/: $COUNT files"
+          fi
       
+      # ========================================================================
+      # Create Downloadable ZIP
+      # ========================================================================
+      - name: Create ZIP artifact
+        run: |
+          echo "📦 Creating ZIP archive for download..."
+          
+          cd BitnetRelease
+          
+          # Zip CPU variants
+          zip -r ../macos-cpu-all.zip cpu/macos/
+          
+          # Zip GPU variant
+          zip -r ../macos-gpu-metal.zip gpu/macos/
+          
+          # Zip everything together
+          cd ..
+          zip -r macos-complete.zip BitnetRelease/
+          
+          echo ""
+          echo "✅ ZIP files created:"
+          ls -lh macos-*.zip
+      
+      # ========================================================================
+      # Upload Artifacts
+      # ========================================================================
+      - name: Upload CPU artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-cpu-all
+          path: macos-cpu-all.zip
+          retention-days: 90
+      
+      - name: Upload GPU artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-gpu-metal
+          path: macos-gpu-metal.zip
+          retention-days: 90
+      
+      - name: Upload Complete Build
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-complete-build
+          path: macos-complete.zip
+          retention-days: 90
+      
+      # ========================================================================
+      # Create GitHub Release (Optional)
+      # ========================================================================
       - name: Create GitHub Release
+        if: github.event.inputs.create_release == 'true'
         uses: softprops/action-gh-release@v1
         with:
           tag_name: macos-build-${{ github.run_number }}
-          name: macOS Binaries (Build ${{ github.run_number }})
+          name: macOS Complete Build (Build ${{ github.run_number }})
           body: |
-            ## BitNet macOS Binaries
+            ## 🍎 BitNet macOS Complete Build
             
             **Build:** ${{ github.run_number }}
             **Commit:** ${{ github.sha }}
             **Date:** ${{ github.event.head_commit.timestamp }}
             
-            ### ✅ Included (Built by CI):
-            - macOS CPU binary (ARM64 TL1)
-            - macOS GPU modules (Python only)
+            ### ✅ What's Included:
+            - **BitNet ARM** - M1/M2/M3/M4 with TL1 kernels
+            - **BitNet Intel** - Intel Macs with TL2 kernels
+            - **Standard CPU** - Universal, no BitNet
+            - **Metal GPU** - ALL Macs (M1/M2/M3 + Intel)
             
-            ### ⏳ To Upload Manually:
-            - Windows CPU + GPU (build locally)
-            - Linux CPU + GPU (build locally)
+            ### 📦 Download Options:
+            - **macos-complete.zip** - Everything (CPU + GPU)
+            - **macos-cpu-all.zip** - Just CPU variants (3 variants)
+            - **macos-gpu-metal.zip** - Just Metal GPU variant
             
-            ### How to Add Windows/Linux:
-            1. Build locally on Windows/WSL2
-            2. Upload binaries to this release
-            3. Update release notes
+            ### 📁 Extract & Use:
+            ```bash
+            # Download macos-complete.zip
+            unzip macos-complete.zip
             
-            For TabAgent integration, manual upload of all platforms required.
-          draft: true
+            # For Apple Silicon (M1/M2/M3):
+            cd BitnetRelease/cpu/macos/bitnet-arm/
+            ./llama-server -m model.gguf
+            
+            # For Metal GPU (best performance):
+            cd BitnetRelease/gpu/macos/standard-metal/
+            ./llama-server -m model.gguf -ngl 99
+            ```
+            
+            ### 🚀 TabAgent Integration:
+            Extract to your TabAgent Server's `BitnetRelease/` folder:
+            ```bash
+            unzip macos-complete.zip -d /path/to/TabAgent/Server/BitNet/
+            ```
+          draft: false
           prerelease: false
           files: |
-            Release/cpu/macos/llama-server
+            macos-complete.zip
+            macos-cpu-all.zip
+            macos-gpu-metal.zip
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-

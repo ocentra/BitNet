@@ -216,6 +216,161 @@ optional arguments:
   --quant-embd          Quantize the embeddings to f16
   --use-pretuned, -p    Use the pretuned kernel parameters
 </pre>
+
+## Build Matrix & Compiler Requirements
+
+### Complete Build Variants
+
+The BitNet build system generates **15 optimized variants** for maximum performance across different hardware:
+
+#### CPU Builds (12 variants)
+
+| Variant | Target Hardware | Compiler | SIMD Features |
+|---------|----------------|----------|---------------|
+| **standard** | Generic x86-64 | GCC/Clang | SSE, AVX |
+| **bitnet-portable** | Modern CPUs (baseline) | Clang 14+ | AVX2, FMA |
+| **bitnet-amd-zen1** | AMD Ryzen 1000 / EPYC 7001 | Clang 14+ | Zen 1 optimizations |
+| **bitnet-amd-zen2** | AMD Ryzen 3000 / EPYC 7002 | Clang 14+ | Zen 2 optimizations |
+| **bitnet-amd-zen3** | AMD Ryzen 5000 / EPYC 7003 | Clang 14+ | Zen 3 optimizations |
+| **bitnet-amd-zen4** | AMD Ryzen 7000 / EPYC 7004 | **Clang 17+** | Zen 4 optimizations, AVX-512 |
+| **bitnet-intel-haswell** | Intel 4th gen (2013-2015) | Clang 14+ | Haswell optimizations |
+| **bitnet-intel-broadwell** | Intel 5th gen (2014-2016) | Clang 14+ | Broadwell optimizations |
+| **bitnet-intel-skylake** | Intel 6th-9th gen (2015-2019) | Clang 14+ | Skylake optimizations |
+| **bitnet-intel-icelake** | Intel 10th gen mobile (2019) | Clang 14+ | Ice Lake optimizations |
+| **bitnet-intel-rocketlake** | Intel 11th gen (2021) | Clang 14+ | Rocket Lake optimizations |
+| **bitnet-intel-alderlake** | Intel 12th-14th gen (2021+) | Clang 14+ | Alder Lake optimizations |
+
+#### GPU Builds (3 variants)
+
+| Variant | Technology | Hardware Support |
+|---------|-----------|-----------------|
+| **standard-cuda-vulkan** | CUDA + Vulkan | NVIDIA GPUs (primary) + AMD/Intel (Vulkan) |
+| **standard-opencl** | OpenCL | Universal (AMD, Intel, NVIDIA) |
+| **bitnet-python-cuda** | Python CUDA kernels | NVIDIA GPUs |
+
+### Compiler Requirements by Platform
+
+#### Windows
+- **Visual Studio 2022** (Community/Professional/Enterprise)
+  - Includes: ClangCL, CMake, MSBuild
+- **CUDA Toolkit 12.1+** (for GPU builds)
+- **Vulkan SDK** (for GPU builds)
+
+#### Linux (Ubuntu 22.04+)
+- **Base requirements:**
+  - `clang-14` (default, supports most CPUs)
+  - `cmake 3.22+`
+  - `gcc 11+`
+  - `python 3.9-3.11`
+
+- **For AMD Zen 4 support:**
+  ```bash
+  # Install Clang 17
+  wget -qO- https://apt.llvm.org/llvm-snapshot.gpg.key | sudo tee /etc/apt/trusted.gpg.d/apt.llvm.org.asc
+  sudo add-apt-repository "deb http://apt.llvm.org/jammy/ llvm-toolchain-jammy-17 main"
+  sudo apt update
+  sudo apt install clang-17
+  ```
+
+- **For AMD Zen 5 support (optional, <0.1% market share):**
+  ```bash
+  # Requires Clang 18+ (not yet available in stable Ubuntu 22.04 repos)
+  # Wait for Ubuntu 24.04+ or build Clang 18 from source
+  # Alternatively, upgrade to Ubuntu 24.04 when available
+  ```
+
+- **For GPU builds:**
+  ```bash
+  # CUDA
+  sudo apt install nvidia-cuda-toolkit
+  
+  # OpenCL
+  sudo apt install ocl-icd-opencl-dev
+  
+  # Vulkan
+  wget -qO - https://packages.lunarg.com/lunarg-signing-key-pub.asc | sudo apt-key add -
+  sudo wget -qO /etc/apt/sources.list.d/lunarg-vulkan-jammy.list https://packages.lunarg.com/vulkan/lunarg-vulkan-jammy.list
+  sudo apt update
+  sudo apt install vulkan-sdk
+  ```
+
+### Automated Build Scripts
+
+#### Windows: Complete Build (All Variants)
+```powershell
+# Build all 16 variants (12 CPU + 3 GPU + 1 standard)
+.\build_complete.ps1
+
+# Build specific variants only
+.\build_complete.ps1 -BuildVariants "bitnet-amd-zen3,standard-gpu"
+
+# Clean build (removes existing artifacts)
+.\build_complete.ps1 -Clean
+
+# List available variants
+.\build_complete.ps1 -ListVariants
+```
+
+#### Linux: Complete Build (All Variants)
+```bash
+# Build all 15 variants (12 CPU + 3 GPU)
+bash build-all-linux.sh
+
+# Build specific variants only
+bash build-all-linux.sh --variants bitnet-amd-zen4,standard-opencl
+
+# Clean build (removes existing artifacts)
+bash build-all-linux.sh --clean
+
+# List available variants
+bash build-all-linux.sh --list-variants
+```
+
+### Build Output Structure
+
+All builds are organized into isolated, self-contained directories:
+
+```
+BitnetRelease/
+├── cpu/
+│   ├── windows/
+│   │   ├── standard/              (58 files - llama.cpp standard)
+│   │   ├── bitnet-portable/       (41 files - AVX2 baseline)
+│   │   ├── bitnet-amd-zen2/       (41 files - optimized for your CPU)
+│   │   ├── bitnet-intel-skylake/  (41 files - optimized for your CPU)
+│   │   └── ...
+│   └── linux/
+│       ├── standard/              (58 files - llama.cpp standard)
+│       ├── bitnet-portable/       (41 files - AVX2 baseline)
+│       └── ...
+└── gpu/
+    ├── windows/
+    │   ├── standard-cuda-vulkan/  (56 files - CUDA + Vulkan)
+    │   ├── standard-opencl/       (55 files - OpenCL)
+    │   └── bitnet-python-cuda/    (15 files - Python CUDA)
+    └── linux/
+        ├── standard-cuda-vulkan/  (56 files - CUDA + Vulkan)
+        ├── standard-opencl/       (55 files - OpenCL)
+        └── bitnet-python-cuda/    (15 files - Python CUDA)
+```
+
+**Each variant directory is 100% self-contained** - you can zip any folder and distribute it directly!
+
+### Performance Tips
+
+1. **CPU Selection:** Use the variant matching your specific CPU generation for best performance
+   - Zen 3 optimizations can be 15-20% faster than portable on Ryzen 5000
+   - Intel 12th gen (Alder Lake) gets significant boost with its specific variant
+   
+2. **Backwards Compatibility:** Newer variants work on older CPUs
+   - `bitnet-amd-zen3` will run on Zen 2, but may be slightly slower
+   - `bitnet-intel-alderlake` will run on Skylake, but won't be optimal
+
+3. **GPU Selection:**
+   - **NVIDIA users:** Use `standard-cuda-vulkan` (fastest) or `bitnet-python-cuda` (most flexible)
+   - **AMD/Intel users:** Use `standard-opencl` (universal compatibility)
+   - **Multi-GPU:** `standard-cuda-vulkan` supports Vulkan fallback
+
 ## Usage
 ### Basic usage
 ```bash

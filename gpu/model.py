@@ -16,7 +16,26 @@ from xformers.ops.fmha.attn_bias import (
 )
 
 import ctypes
-bitnet_lib = ctypes.CDLL('bitnet_kernels/libbitnet.so')
+import platform
+import os
+
+# Load the custom CUDA kernel (platform-aware)
+if platform.system() == "Windows":
+    # Windows: try current directory first (for Release/gpu/windows/python/), then subfolder
+    if os.path.exists('libbitnet.dll'):
+        bitnet_lib = ctypes.CDLL('libbitnet.dll')
+    elif os.path.exists('bitnet_kernels/libbitnet.dll'):
+        bitnet_lib = ctypes.CDLL('bitnet_kernels/libbitnet.dll')
+    else:
+        raise FileNotFoundError("libbitnet.dll not found. Please build the CUDA kernel first.")
+else:
+    # Linux: use .so file in bitnet_kernels/ subfolder
+    if os.path.exists('bitnet_kernels/libbitnet.so'):
+        bitnet_lib = ctypes.CDLL('bitnet_kernels/libbitnet.so')
+    elif os.path.exists('libbitnet.so'):
+        bitnet_lib = ctypes.CDLL('libbitnet.so')
+    else:
+        raise FileNotFoundError("libbitnet.so not found. Please build the CUDA kernel first.")
 
 def bitnet_int8xint2_linear(input0, input1, s, ws):
     out_shape = list(input0.shape)
