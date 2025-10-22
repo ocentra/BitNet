@@ -358,23 +358,38 @@ jobs:
       # ========================================================================
       - name: Create ZIP artifact
         run: |
-          echo "📦 Creating ZIP archive for download..."
+          echo "📦 Creating ZIP archive for macOS builds ONLY..."
           
-          cd BitnetRelease
+          # Create temp directory with ONLY macOS builds
+          mkdir -p macos-release/cpu/macos
+          mkdir -p macos-release/gpu/macos
           
-          # Zip CPU variants
+          # Copy ONLY macOS files
+          cp -r BitnetRelease/cpu/macos/* macos-release/cpu/macos/ 2>/dev/null || true
+          cp -r BitnetRelease/gpu/macos/* macos-release/gpu/macos/ 2>/dev/null || true
+          
+          # Copy READMEs
+          cp BitnetRelease/README.md macos-release/ 2>/dev/null || true
+          cp BitnetRelease/DEVELOPER_GUIDE.md macos-release/ 2>/dev/null || true
+          cp BitnetRelease/LICENSE macos-release/ 2>/dev/null || true
+          
+          # Zip CPU variants (macOS only)
+          cd macos-release
           zip -r ../macos-cpu-all.zip cpu/macos/
           
-          # Zip GPU variant
+          # Zip GPU variant (macOS only)
           zip -r ../macos-gpu-metal.zip gpu/macos/
           
-          # Zip everything together
+          # Zip everything together (macOS only)
           cd ..
-          zip -r macos-complete.zip BitnetRelease/
+          zip -r macos-complete.zip macos-release/
           
           echo ""
-          echo "✅ ZIP files created:"
+          echo "✅ ZIP files created (macOS builds only):"
           ls -lh macos-*.zip
+          
+          # Cleanup temp directory
+          rm -rf macos-release
       
       # ========================================================================
       # Upload Artifacts
