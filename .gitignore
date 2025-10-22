@@ -31,6 +31,7 @@ gpu/**/*.so
 gpu/**/*.pyd
 libs/**/*.dll
 libs/**/*.so
+libs/**/*.lib
 
 # IDE / OS
 .cache/
