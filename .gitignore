@@ -58,10 +58,8 @@ poetry.toml
 
 build/
 build-*/
-BitnetRelease/*
 logs/wsl-bitnet-env/
 wsl-bitnet-env/
 /bitnet-gpu-env
 /bitnet-gpu-env-windows
 /bitnet-gpu-env-linux
-/BitnetRelease
