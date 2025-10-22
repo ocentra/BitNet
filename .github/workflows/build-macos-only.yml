@@ -53,28 +53,19 @@ jobs:
           fi
       
       # ========================================================================
-      # VARIANT 2: BitNet Intel (Intel Macs with TL2 kernels)
+      # VARIANT 2: BitNet Intel (SKIPPED - GitHub Actions uses ARM runners)
       # ========================================================================
-      - name: Build BitNet Intel (Intel Macs)
+      - name: Skip BitNet Intel (Intel Macs)
         run: |
-          echo "🔨 Building BitNet Intel (x86 - TL2 kernels)..."
-          
-          cmake -B build-macos-bitnet-intel \
-            -DBITNET_X86_TL2=ON \
-            -DCMAKE_C_COMPILER=clang \
-            -DCMAKE_CXX_COMPILER=clang++ \
-            -DCMAKE_OSX_ARCHITECTURES=x86_64 \
-            -DLLAMA_BUILD_SERVER=ON \
-            -DLLAMA_BUILD_EXAMPLES=ON \
-            .
-          
-          if cmake --build build-macos-bitnet-intel --config Release -j; then
-            echo "BITNET_INTEL_SUCCESS=true" >> $GITHUB_ENV
-            echo "✅ BitNet Intel build SUCCESS"
-          else
-            echo "BITNET_INTEL_SUCCESS=false" >> $GITHUB_ENV
-            echo "❌ BitNet Intel build FAILED"
-          fi
+          echo "⏭️  Skipping BitNet Intel build..."
+          echo ""
+          echo "Reason: GitHub macOS runners are Apple Silicon (M1/M2/M3) only."
+          echo "Cross-compiling ARM → x86 is problematic due to CPU detection issues."
+          echo ""
+          echo "To build for Intel Macs, run build-all-macos.sh locally on an Intel Mac."
+          echo "Intel Macs are legacy (discontinued 2020) - ARM build covers modern Macs."
+          echo ""
+          echo "BITNET_INTEL_SUCCESS=skipped" >> $GITHUB_ENV
       
       # ========================================================================
       # VARIANT 3: Standard CPU (no BitNet, universal)
@@ -163,25 +154,10 @@ jobs:
           fi
           
           # ================================================================
-          # Copy BitNet Intel binaries
+          # Skip BitNet Intel (not built on GitHub Actions)
           # ================================================================
-          if [ "$BITNET_INTEL_SUCCESS" = "true" ]; then
-            echo "📦 Copying BitNet Intel binaries..."
-            
-            if [ -d "build-macos-bitnet-intel/bin" ]; then
-              cp -f build-macos-bitnet-intel/bin/* BitnetRelease/cpu/macos/bitnet-intel/ 2>/dev/null || true
-            fi
-            
-            # Copy .dylib files
-            find build-macos-bitnet-intel -name "*.dylib" -type f -exec cp -f {} BitnetRelease/cpu/macos/bitnet-intel/ \; 2>/dev/null || true
-            
-            chmod +x BitnetRelease/cpu/macos/bitnet-intel/* 2>/dev/null || true
-            
-            FILE_COUNT=$(ls -1 BitnetRelease/cpu/macos/bitnet-intel/ 2>/dev/null | wc -l)
-            echo "  ✅ bitnet-intel: $FILE_COUNT files copied"
-          else
-            echo "  ⚠️ BitNet Intel build failed - skipping"
-          fi
+          echo "⏭️  Skipping BitNet Intel (not built on ARM runners)"
+          echo "  Build locally on Intel Mac if needed"
           
           # ================================================================
           # Copy Standard CPU binaries
@@ -274,17 +250,23 @@ jobs:
           cat > BitnetRelease/cpu/macos/VERIFICATION.md << 'EOF'
           # 🔍 BitNet macOS Build Verification Report
           
-          ## Build Matrix
+          ## Build Matrix (GitHub Actions)
           
-          This directory contains **4 macOS variants** (3 CPU + 1 GPU):
+          This directory contains **2 CPU variants** built by GitHub Actions:
           
-          ### CPU Variants
+          ### ✅ CPU Variants Built
           - **bitnet-arm/** - BitNet for Apple Silicon (M1/M2/M3/M4 with TL1 kernels)
-          - **bitnet-intel/** - BitNet for Intel Macs (x86 with TL2 kernels)
           - **standard/** - Standard llama.cpp (universal, no BitNet)
           
-          ### GPU Variant
-          - **standard-metal/** - Metal GPU acceleration (ALL Macs)
+          ### ⏭️ Skipped on GitHub Actions
+          - **bitnet-intel/** - BitNet for Intel Macs (requires local Intel Mac build)
+            - GitHub's macOS runners are Apple Silicon only
+            - Cross-compiling ARM → x86 causes CPU detection issues
+            - Intel Macs are legacy (discontinued 2020)
+            - To build: run `build-all-macos.sh` locally on an Intel Mac
+          
+          ### GPU Variant (separate directory)
+          - **../gpu/macos/standard-metal/** - Metal GPU acceleration (ALL Macs)
           
           ## Quick Start
           
@@ -294,10 +276,10 @@ jobs:
           ./llama-server -m bitnet-model.gguf
           ```
           
-          ### For Intel Macs:
+          ### For ANY Mac (universal standard build):
           ```bash
-          cd bitnet-intel/
-          ./llama-server -m bitnet-model.gguf
+          cd standard/
+          ./llama-server -m model.gguf
           ```
           
           ### For Metal GPU (Best Performance):
@@ -338,12 +320,13 @@ jobs:
           echo "BitnetRelease/cpu/macos/"
           ls -lh BitnetRelease/cpu/macos/ 2>/dev/null || echo "  (empty)"
           echo ""
-          for subdir in bitnet-arm bitnet-intel standard; do
+          for subdir in bitnet-arm standard; do
             if [ -d "BitnetRelease/cpu/macos/$subdir" ]; then
               COUNT=$(ls -1 BitnetRelease/cpu/macos/$subdir 2>/dev/null | wc -l)
-              echo "  $subdir/: $COUNT files"
+              echo "  ✅ $subdir/: $COUNT files"
             fi
           done
+          echo "  ⏭️  bitnet-intel/: skipped (requires Intel Mac)"
           echo ""
           echo "BitnetRelease/gpu/macos/"
           ls -lh BitnetRelease/gpu/macos/ 2>/dev/null || echo "  (empty)"
